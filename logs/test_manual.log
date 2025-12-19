@@ -1,0 +1,29 @@
+============================================ 
+TESTE MANUAL - 2025-12-19 08:46:34.709899 
+============================================ 
+ 
+Executando comando: 
+"C:\Users\CAIO MAXIMUS\AppData\Local\Programs\Python\Python312\python.exe" "c:\Users\CAIO MAXIMUS\Documents\GitHub\meu-teste\app.py" --auto "c:\Users\CAIO MAXIMUS\Documents\GitHub\meu-teste\scheduled_tasks\test_manual.json" 
+ 
+DEBUG: sys.argv = ['c:\\Users\\CAIO MAXIMUS\\Documents\\GitHub\\meu-teste\\app.py', '--auto', 'c:\\Users\\CAIO MAXIMUS\\Documents\\GitHub\\meu-teste\\scheduled_tasks\\test_manual.json']
+[08:46:35] ======================================================================
+[08:46:35] INÍCIO DA AUTOMAÇÃO AGENDADA
+[08:46:35] Arquivo de instrução: c:\Users\CAIO MAXIMUS\Documents\GitHub\meu-teste\scheduled_tasks\test_manual.json
+[08:46:35] Diretório de trabalho: c:\Users\CAIO MAXIMUS\Documents\GitHub\meu-teste
+[08:46:35] BASE_DIR: c:\Users\CAIO MAXIMUS\Documents\GitHub\meu-teste
+[08:46:35] ======================================================================
+Traceback (most recent call last):
+  File "c:\Users\CAIO MAXIMUS\Documents\GitHub\meu-teste\app.py", line 186, in <module>
+    run_auto(sys.argv[2])
+  File "c:\Users\CAIO MAXIMUS\Documents\GitHub\meu-teste\app.py", line 89, in run_auto
+    logger(f"\u2713 Arquivo JSON encontrado")
+  File "c:\Users\CAIO MAXIMUS\Documents\GitHub\meu-teste\app.py", line 33, in logger
+    print(line.strip())  # \u2190 ADICIONADO: também imprime no console
+    ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\CAIO MAXIMUS\AppData\Local\Programs\Python\Python312\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2713' in position 11: character maps to <undefined>
+ 
+Codigo de saida: 1 
+============================================ 
