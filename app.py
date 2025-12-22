@@ -16,7 +16,7 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PROFILE_DIR = os.path.join(BASE_DIR, "perfil_automacao")
+PROFILE_DIR = os.path.join(BASE_DIR, "perfil_bot_whatsapp")
 
 def ensure_profile_dir():
     os.makedirs(PROFILE_DIR, exist_ok=True)

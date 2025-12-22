@@ -33,7 +33,7 @@ else:
     # Se for script, pega a pasta raiz do projeto
     EXTERNAL_DIR = os.path.dirname(os.path.abspath(os.path.dirname(__file__)))
 
-PROFILE_DIR = os.path.join(EXTERNAL_DIR, "perfil_automacao")
+PROFILE_DIR = os.path.join(EXTERNAL_DIR, "perfil_bot_whatsapp")
 
 def _get_icon_path():
     return os.path.join(INTERNAL_DIR, "resources", "Taty_s-English-Logo.ico")
