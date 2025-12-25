@@ -138,108 +138,75 @@ def contador_execucao(incrementar=True):
 def iniciar_driver(userdir=None, headless=False, timeout=60, logger=None):
     """
     Inicia undetected_chromedriver com perfil persistente.
+    FAKE HEADLESS: janela fora da tela com proporção diferente.
     """
     try:
-        # CORREÇÃO CRÍTICA: Se userdir é None, usa o perfil da pasta do executável
         if userdir is None:
-            # Determina o diretório base corretamente
             if getattr(sys, 'frozen', False):
-                # Modo executável (.exe)
                 base_dir = os.path.dirname(sys.executable)
             else:
-                # Modo desenvolvimento (.py)
                 base_dir = os.path.dirname(os.path.abspath(__file__))
                 base_dir = os.path.join(base_dir, "..")
-            
+
             userdir = os.path.join(base_dir, "perfil_bot_whatsapp")
-        
-        # Garante que o diretório existe
+
         if not os.path.exists(userdir):
             os.makedirs(userdir)
             if logger:
                 logger(f"Criado novo perfil Chrome em: {userdir}")
-        
+
         if logger:
             logger(f"Iniciando Chrome com profile: {userdir}")
-            
-            # Verifica se o perfil já foi autenticado
-            local_state = os.path.join(userdir, "Local State")
-            if os.path.exists(local_state):
-                logger("✓ Perfil Chrome encontrado (pode estar autenticado)")
-            else:
-                logger("⚠️  Perfil Chrome novo/não autenticado")
 
         options = uc.ChromeOptions()
         options.add_argument(f"--user-data-dir={userdir}")
 
-        # --- HEADLESS ---
-        '''if headless:
-            if logger: logger("Modo invisível (headless) ativado para esta execução.")
-            options.add_argument('--headless=new')
-            options.add_argument("--window-size=1920,1080")
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-setuid-sandbox')
-            options.add_argument('--remote-debugging-pipe')
-            options.add_argument('--no-first-run')
-            options.add_argument('--no-default-browser-check')
-        else:
-            options.add_argument("--start-maximized")'''
+        # ==============================
+        # FAKE HEADLESS (SEM --headless)
+        # ==============================
+        options.add_argument("--window-position=-32000,-32000")
+        options.add_argument("--window-size=1366,768")  # proporção diferente
+        options.add_argument("--disable-backgrounding-occluded-windows")
 
+        # Flags de estabilidade
         options.add_argument("--disable-notifications")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        options.add_argument("--start-maximized")
         options.add_argument("--disable-infobars")
         options.add_argument("--disable-extensions")
-        
-        # Importante para evitar problemas de permissão
         options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
 
         driver = uc.Chrome(options=options)
         driver.set_page_load_timeout(timeout)
-        
-        # Maximiza a janela (importante para elementos aparecerem)
-        if not headless:
-            driver.maximize_window()
 
         if logger:
-            logger("Chrome iniciado. Acessando WhatsApp Web...")
-        
+            logger("Chrome iniciado em FAKE HEADLESS. Acessando WhatsApp Web...")
+
         driver.get("https://web.whatsapp.com")
-        
-        # Tempo de espera maior para modo automático
-        wait_time = 10  # 10 segundos para carregar
+
+        wait_time = 10
         if logger:
             logger(f"Aguardando {wait_time} segundos para carregar WhatsApp...")
-        
         time.sleep(wait_time)
 
-        # Verificação simples se está autenticado
         try:
-            # Tenta encontrar qualquer elemento que indique que está logado
             driver.find_element(By.XPATH, "//div[@role='textbox']")
             if logger:
-                logger("✓ WhatsApp Web parece estar autenticado")
+                logger("✓ WhatsApp Web carregado (DOM ativo).")
         except:
             if logger:
-                logger("⚠️  WhatsApp Web não parece autenticado")
-                logger("   Talvez precise escanear QR Code novamente")
-            # Não falha imediatamente - continua e vê o que acontece
+                logger("⚠️ WhatsApp Web pode não estar autenticado.")
 
-        if logger:
-            logger("WhatsApp Web carregado (ou pronto para autenticação).")
-        
         return driver
-        
+
     except Exception as e:
         if logger:
             logger(f"❌ ERRO ao iniciar Chrome: {e}")
-            import traceback
             logger(traceback.format_exc())
         raise
+
 
 # --------------------------
 # Buscar contato / abrir chat

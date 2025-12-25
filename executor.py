@@ -3,6 +3,7 @@ import os
 import traceback
 import datetime
 import time
+from core import automation
 
 # =========================
 # BASE DIR (compatível com EXE)
@@ -99,7 +100,8 @@ def main(task_id: str):
             mode=task["mode"],
             message=task.get("message"),
             file_path=task.get("file_path"),
-            logger=logger
+            logger=logger,
+            headless=True
         )
 
         # ===== FINALIZA =====

@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 from PySide6.QtWidgets import QApplication
 from ui.main_window import MainWindow
-from core.automation import run_auto, executar_envio, contador_execucao
+from core.automation import executar_envio, contador_execucao
 
 '''BASE_DIR = getattr(
     sys,
@@ -77,8 +77,19 @@ if __name__ == "__main__":
             index = sys.argv.index("--auto")
             json_path = sys.argv[index + 1]
             
-            # Chama a função no core/automation.py
-            run_auto(json_path)
+            import json
+
+            with open(json_path, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+
+            executar_envio(
+                userdir=PROFILE_DIR,
+                target=dados["target"],
+                mode=dados["mode"],
+                message=dados.get("message"),
+                file_path=dados.get("file_path"),
+            )
+
             
             print("DEBUG: Automação finalizada. Encerrando processo.")
             sys.exit(0)
