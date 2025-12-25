@@ -198,4 +198,3 @@ def update_last_error(task_id, error):
 
     conn.commit()
     conn.close()
-

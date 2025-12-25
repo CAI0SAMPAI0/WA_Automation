@@ -89,33 +89,6 @@ def main(task_id: str):
         user_profile_dir = get_user_chrome_profile_dir()
         logger.info(f"Chrome profile: {user_profile_dir}")
 
-        # ===== EXECUÇÃO COM HEADLESS =====
-        # Mudamos aqui: adicionamos o parâmetro headless=True
-
-        invisível = True # Definido como True para execução headless
-        executar_envio(
-            userdir=user_profile_dir,
-            target=task["target"],
-            mode=task["mode"],
-            message=task.get("message"),
-            file_path=task.get("file_path"),
-            logger=logger,
-            headless=invisível
-        )
-
-        # ===== FINALIZA =====
-        update_status(task_id, "COMPLETED")
-        logger.info("Tarefa concluída com sucesso")
-        sys.exit(0)
-
-    except Exception as e:
-        logger.error("ERRO DURANTE EXECUÇÃO")
-        logger.error(traceback.format_exc())
-        increment_attempts(task_id)
-        update_last_error(task_id, str(e))
-        update_status(task_id, "FAILED")
-        sys.exit(1)
-
         # ===== DELAY EXTRA =====
         time.sleep(DEFAULT_UPLOAD_DELAY)
 
@@ -136,6 +109,15 @@ def main(task_id: str):
 
         sys.exit(0)
 
+    except Exception as e:
+        logger.error("ERRO DURANTE EXECUÇÃO")
+        logger.error(traceback.format_exc())
+
+        increment_attempts(task_id)
+        update_last_error(task_id, str(e))
+        update_status(task_id, "FAILED")
+
+        sys.exit(1)
 
 
 # =========================

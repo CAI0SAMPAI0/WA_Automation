@@ -69,6 +69,7 @@ def run_gui():
 
 # --- EXECUÇÃO PRINCIPAL ---
 if __name__ == "__main__":
+    # Se o argumento --auto estiver presente, roda a automação e fecha
     if "--auto" in sys.argv:
         try:
             print(f"DEBUG: Modo Automático detectado. Argumentos: {sys.argv}")

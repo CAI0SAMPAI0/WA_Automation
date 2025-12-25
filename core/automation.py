@@ -4,11 +4,6 @@ import traceback
 import sys
 import undetected_chromedriver as uc
 import json
-import shutil
-import tempfile
-import uuid
-import random
-import subprocess
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
@@ -40,15 +35,14 @@ def run_auto(json_path):
         message = dados.get("message")
         file_path = dados.get("file_path")
 
-        # CORREÇÃO: Passa is_scheduled=True para indicar execução agendada
+        # Chama a função mestre j
         executar_envio(
-            userdir=None,
+            userdir=None, # O iniciar_driver achará o perfil
             target=target,
             mode=mode,
             message=message,
             file_path=file_path,
-            logger=lambda m: print(f"[AUTO-LOG] {m}"),
-            is_scheduled=True  # NOVO: Indica que é execução agendada
+            logger=lambda m: print(f"[AUTO-LOG] {m}")
         )
         print("✓ Automação agendada concluída com sucesso.")
         
@@ -56,7 +50,6 @@ def run_auto(json_path):
         print(f"❌ Erro na execução automática: {e}")
         traceback.print_exc()
         sys.exit(1)
-
 # --------------------------
 # Utilitários internos
 # --------------------------
@@ -68,25 +61,8 @@ def _log(logger, msg):
         except Exception:
             pass
     else:
+        # fallback simples para stdout
         print(msg)
-
-def criar_perfil_temporario(base_profile_dir, logger=None):
-    try:
-        temp_dir = os.path.join(tempfile.gettempdir(), f"whatsapp_bot_profile_{uuid.uuid4().hex[:8]}")
-        _log(logger, f"Clonando perfil para uso paralelo: {temp_dir}")
-        
-        def copy_with_ignore(src, dst):
-            try:
-                shutil.copy2(src, dst)
-            except Exception:
-                pass
-
-        shutil.copytree(base_profile_dir, temp_dir, dirs_exist_ok=True, copy_function=copy_with_ignore)
-        
-        return temp_dir
-    except Exception as e:
-        _log(logger, f"Erro crítico ao clonar: {e}. Tentando seguir com original.")
-        return base_profile_dir
 
 def _wait(driver, by, selector, timeout=10):
     """Espera por presença de elemento e retorna WebElement ou None."""
@@ -105,6 +81,7 @@ def _wait_clickable(driver, by, selector, timeout=10):
 def _find(driver, candidates):
     """
     Recebe lista de tuplas (By, selector) e retorna o primeiro WebElement encontrado.
+    candidates: [(By.XPATH, '...'), (By.CSS_SELECTOR, '...'), ...]
     """
     for by, sel in candidates:
         try:
@@ -118,6 +95,7 @@ def _find(driver, candidates):
 # --------------------------
 # Headless a partir da 3ª execução
 # --------------------------
+
 def contador_execucao(incrementar=True):
     import sys
     import os
@@ -130,6 +108,7 @@ def contador_execucao(incrementar=True):
     count_file = os.path.join(base_dir, "execution_count.txt")
     
     count = 0
+    # Tenta ler o valor atual
     if os.path.exists(count_file):
         try:
             with open(count_file, 'r', encoding='utf-8') as f:
@@ -139,9 +118,11 @@ def contador_execucao(incrementar=True):
             print(f"Erro ao ler arquivo de contagem: {e}")
             count = 0
 
+    # Se for para incrementar, realiza a gravação "forçada" no disco
     if incrementar:
         count += 1
         try:
+            # 'w' sobrescreve o arquivo com o novo número
             with open(count_file, 'w', encoding='utf-8', errors='ignore') as f:
                 f.write(str(count))
                 f.flush()
@@ -156,92 +137,108 @@ def contador_execucao(incrementar=True):
 # --------------------------
 def iniciar_driver(userdir=None, headless=False, timeout=60, logger=None):
     """
-    Inicia o undetected_chromedriver.
-    CORREÇÃO: Agora respeita o parâmetro headless corretamente.
+    Inicia undetected_chromedriver com perfil persistente.
     """
-    import os, sys, time, random
-    import undetected_chromedriver as uc
-    driver = None
-
     try:
+        # CORREÇÃO CRÍTICA: Se userdir é None, usa o perfil da pasta do executável
         if userdir is None:
+            # Determina o diretório base corretamente
             if getattr(sys, 'frozen', False):
+                # Modo executável (.exe)
                 base_dir = os.path.dirname(sys.executable)
             else:
+                # Modo desenvolvimento (.py)
                 base_dir = os.path.dirname(os.path.abspath(__file__))
                 base_dir = os.path.join(base_dir, "..")
+            
             userdir = os.path.join(base_dir, "perfil_bot_whatsapp")
         
+        # Garante que o diretório existe
         if not os.path.exists(userdir):
             os.makedirs(userdir)
-            if logger: logger(f"Criado perfil em: {userdir}")
+            if logger:
+                logger(f"Criado novo perfil Chrome em: {userdir}")
+        
+        if logger:
+            logger(f"Iniciando Chrome com profile: {userdir}")
+            
+            # Verifica se o perfil já foi autenticado
+            local_state = os.path.join(userdir, "Local State")
+            if os.path.exists(local_state):
+                logger("✓ Perfil Chrome encontrado (pode estar autenticado)")
+            else:
+                logger("⚠️  Perfil Chrome novo/não autenticado")
 
         options = uc.ChromeOptions()
         options.add_argument(f"--user-data-dir={userdir}")
-        
-        # Configurações básicas (sempre)
-        options.add_argument('--ignore-certificate-errors')
-        options.add_argument('--no-first-run')
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--no-default-browser-check")
-        options.add_argument("--disable-session-crashed-bubble")
-        options.add_argument("--disable-notifications")
-        
-        # CORREÇÃO: Configurações específicas por modo
-        if headless:
-            if logger: logger("Iniciando Chrome em modo HEADLESS (invisível)...")
+
+        # --- HEADLESS ---
+        '''if headless:
+            if logger: logger("Modo invisível (headless) ativado para esta execução.")
             options.add_argument('--headless=new')
+            options.add_argument("--window-size=1920,1080")
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
-            options.add_argument('--disable-gpu')
-            options.add_argument('--disable-software-rasterizer')
-            options.add_argument('--window-size=1920,1080')
-            debug_port = random.randint(9000, 9999)
-            options.add_argument(f'--remote-debugging-port={debug_port}')
-            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            options.add_argument('--disable-setuid-sandbox')
+            options.add_argument('--remote-debugging-pipe')
+            options.add_argument('--no-first-run')
+            options.add_argument('--no-default-browser-check')
         else:
-            if logger: logger("Iniciando Chrome em modo VISÍVEL...")
-            options.add_argument("--start-maximized")
-        
-        # Inicia o driver
-        driver = uc.Chrome(
-            options=options,
-            use_subprocess=False,  # CORREÇÃO: False para evitar problemas de processo
-            version_main=None
-        )
-        
-        if logger: logger("✓ Chrome iniciado com sucesso")
-        
-        # Ajusta janela conforme o modo
-        if headless:
-            driver.set_window_size(1920, 1080)
-        else:
-            try:
-                driver.maximize_window()
-            except:
-                driver.set_window_size(1920, 1080)
+            options.add_argument("--start-maximized")'''
 
+        options.add_argument("--disable-notifications")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--start-maximized")
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-extensions")
+        
+        # Importante para evitar problemas de permissão
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+
+        driver = uc.Chrome(options=options)
         driver.set_page_load_timeout(timeout)
+        
+        # Maximiza a janela (importante para elementos aparecerem)
+        if not headless:
+            driver.maximize_window()
 
-        # Acessa WhatsApp Web
-        if logger: logger("Acessando WhatsApp Web...")
+        if logger:
+            logger("Chrome iniciado. Acessando WhatsApp Web...")
+        
         driver.get("https://web.whatsapp.com")
         
-        # Tempo de carregamento adaptativo
-        tempo_espera = 25 if headless else 15
-        if logger: logger(f"Aguardando {tempo_espera}s para WhatsApp carregar...")
-        time.sleep(tempo_espera)
+        # Tempo de espera maior para modo automático
+        wait_time = 10  # 10 segundos para carregar
+        if logger:
+            logger(f"Aguardando {wait_time} segundos para carregar WhatsApp...")
         
-        if logger: logger("✓ WhatsApp Web carregado")
-        return driver
+        time.sleep(wait_time)
 
+        # Verificação simples se está autenticado
+        try:
+            # Tenta encontrar qualquer elemento que indique que está logado
+            driver.find_element(By.XPATH, "//div[@role='textbox']")
+            if logger:
+                logger("✓ WhatsApp Web parece estar autenticado")
+        except:
+            if logger:
+                logger("⚠️  WhatsApp Web não parece autenticado")
+                logger("   Talvez precise escanear QR Code novamente")
+            # Não falha imediatamente - continua e vê o que acontece
+
+        if logger:
+            logger("WhatsApp Web carregado (ou pronto para autenticação).")
+        
+        return driver
+        
     except Exception as e:
-        if logger: logger(f"❌ ERRO ao iniciar driver: {str(e)}")
-        if driver is not None:
-            try: 
-                driver.quit()
-            except: 
-                pass
+        if logger:
+            logger(f"❌ ERRO ao iniciar Chrome: {e}")
+            import traceback
+            logger(traceback.format_exc())
         raise
 
 # --------------------------
@@ -250,7 +247,7 @@ def iniciar_driver(userdir=None, headless=False, timeout=60, logger=None):
 def procurar_contato_grupo(driver, target, logger=None, timeout=2):
     """
     Busca e abre a conversa com o contato/grupo pelo nome exato.
-    MANTIDO: XPaths originais preservados.
+    Tenta vários seletores da caixa de busca; se falhar tenta clicar primeiro chat.
     """
     try:
         _log(logger, f"Procurando contato/grupo: {target}")
@@ -264,6 +261,7 @@ def procurar_contato_grupo(driver, target, logger=None, timeout=2):
         search_box, sel = _find(driver, search_candidates)
         if not search_box:
             _log(logger, "Campo de busca não encontrado via seletores comuns. Tentando abrir primeiro chat como fallback...")
+            # fallback: abrir primeiro chat da lista
             first_chat = _wait_clickable(driver, By.CSS_SELECTOR, "div[role='listitem']", timeout=2)
             if first_chat:
                 try:
@@ -274,15 +272,18 @@ def procurar_contato_grupo(driver, target, logger=None, timeout=2):
                     pass
             raise Exception("Caixa de pesquisa não encontrada (XPaths testados).")
 
+        # focar, limpar e digitar
         try:
             search_box.click()
         except Exception:
             driver.execute_script("arguments[0].focus();", search_box)
         time.sleep(0.2)
         try:
+            # limpar (Ctrl+A + Del)
             search_box.send_keys(Keys.CONTROL + "a")
             search_box.send_keys(Keys.DELETE)
         except Exception:
+            # fallback: executar script para limpar
             driver.execute_script("arguments[0].innerText = '';", search_box)
         time.sleep(0.2)
         search_box.send_keys(target)
@@ -303,7 +304,6 @@ def procurar_contato_grupo(driver, target, logger=None, timeout=2):
 def enviar_mensagem_simples(driver, message, logger=None, timeout=4):
     """
     Envia apenas mensagem de texto no chat já aberto.
-    MANTIDO: XPaths originais preservados.
     """
     try:
         _log(logger, "Enviando mensagem de texto...")
@@ -324,18 +324,20 @@ def enviar_mensagem_simples(driver, message, logger=None, timeout=4):
         msg_box.send_keys(message)
         time.sleep(0.3)
 
+        # tentar clicar no botão de enviar (setinha) primeiro; se não, enviar Enter
         send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled']", timeout=2)
         if not send_btn:
             send_btn = _wait(driver, By.CSS_SELECTOR, "span[data-icon='send']", timeout=2)
         if not send_btn:
             logger_msg = "Botão de enviar não encontrado; enviando com Enter."
             _log(logger, logger_msg)
-            msg_box.send_keys(Keys.ENTER)
-        else:
+            raise Exception(logger_msg)
             try:
                 send_btn.click()
-            except:
+            except Exception as e:
                 msg_box.send_keys(Keys.ENTER)
+        else:
+            msg_box.send_keys(Keys.ENTER)
 
         time.sleep(SHORT_DELAY)
         _log(logger, "Mensagem enviada.")
@@ -346,247 +348,280 @@ def enviar_mensagem_simples(driver, message, logger=None, timeout=4):
         raise
 
 # --------------------------
-# CORREÇÃO: Envio de arquivos (múltiplos)
+# Funções de anexos / upload
 # --------------------------
-def enviar_arquivos(driver, file_paths, message=None, headless=False, logger=None):
+def clicar_clip(driver, logger=None):
     """
-    NOVO: Envia um ou múltiplos arquivos com ou sem legenda.
-    Usa apenas send_keys() no input[type='file'] - técnica oficial do Selenium.
-    
-    Args:
-        file_paths: str (caminho único) ou list (múltiplos caminhos)
-        message: legenda opcional
-        headless: se True, usa técnica headless
+    Clica no botão de anexar (clip). Usa seletor baseado em data-icon ou fallback por role.
+    """
+    candidates = [
+        (By.XPATH, "//span[@data-icon='plus-rounded']"),
+        (By.CSS_SELECTOR, "button[aria-label='Anexar']"),
+        (By.CSS_SELECTOR, "span[data-icon='plus-rounded']"),
+    ]
+    el, sel = _find(driver, candidates)
+    if not el:
+        raise Exception("Botão de anexar (clip) não encontrado.")
+    try:
+        el.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", el)
+    time.sleep(0.6)
+    _log(None, f"clicar_clip: clique realizado ({sel}).")
+    return True
+
+def clicar_botao_documento(driver, logger=None):
+    """
+    Clica na opção 'Documento' dentro do painel de anexos.
+    Usa o texto visível 'Documento' como referência (mais estável).
+    """
+    # tenta localizar span com texto "Documento" e subir para o pai clicável
+    try:
+        el = _wait(driver, By.XPATH, "//span[normalize-space()='Documento']/parent::div", timeout=3)
+        if not el:
+            # fallback: localizar elemento pelo title/text parcial
+            el = _wait(driver, By.XPATH, "//*[normalize-space()='Documento']", timeout=2)
+            if el:
+                el = el.find_element(By.XPATH, "./ancestor::div[1]")
+        if not el:
+            raise Exception("Botão 'Documento' não encontrado no painel de anexos.")
+        try:
+            el.click()
+        except Exception:
+            driver.execute_script("arguments[0].click();", el)
+        time.sleep(0.5)
+        _log(logger, "Opção 'Documento' clicada.")
+        return True
+    except Exception as e:
+        _log(logger, f"Erro clicar_botao_documento: {e}")
+        raise
+
+def localizar_input_file(driver, logger=None, timeout=2.5):
+    """
+    Retorna o input[type='file'] mais provável (último no DOM), que é o que o WhatsApp usa.
     """
     try:
-        # Converte string única para lista
-        if isinstance(file_paths, str):
-            file_paths = [file_paths]
-        
-        # Valida que todos os arquivos existem
-        for fp in file_paths:
-            if not os.path.exists(fp):
-                raise Exception(f"Arquivo não encontrado: {fp}")
-        
-        _log(logger, f"Anexando {len(file_paths)} arquivo(s)...")
-        
-        # 1. LOCALIZA O INPUT (sempre presente no DOM, mesmo invisível)
-        input_file = WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='file']"))
-        )
-        
-        # 2. ENVIA OS ARQUIVOS
-        # Para múltiplos arquivos, concatena com \n (funciona no Chrome/Selenium)
-        if len(file_paths) == 1:
-            abs_path = os.path.abspath(file_paths[0])
-            input_file.send_keys(abs_path)
-            _log(logger, f"Arquivo enviado: {os.path.basename(abs_path)}")
-        else:
-            # Múltiplos arquivos: junta com newline
-            abs_paths = [os.path.abspath(fp) for fp in file_paths]
-            combined = "\n".join(abs_paths)
-            input_file.send_keys(combined)
-            _log(logger, f"{len(file_paths)} arquivos enviados")
-        
-        # 3. AGUARDA O PREVIEW CARREGAR
-        wait_time = 8 if headless else 4
-        _log(logger, f"Aguardando {wait_time}s para preview processar...")
-        time.sleep(wait_time)
-        
-        # 4. VERIFICA SE O PREVIEW ABRIU
-        try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.XPATH, "//div[@role='button' and @aria-label='Enviar']"))
-            )
-            _log(logger, "✓ Preview detectado")
-        except:
-            raise Exception("Preview não abriu - WhatsApp pode não ter processado os arquivos")
-        
-        # 5. ADICIONA LEGENDA (SE FORNECIDA)
-        if message:
-            try:
-                _log(logger, "Inserindo legenda...")
-                caption_selectors = [
-                    "//div[@role='textbox' and @aria-label='Adicionar legenda']",
-                    "//div[@role='textbox' and @contenteditable='true' and @data-tab='10']",
-                    "//div[@contenteditable='true' and contains(@class, 'copyable-text')]"
-                ]
-                
-                caption_box = None
-                for selector in caption_selectors:
-                    try:
-                        caption_box = WebDriverWait(driver, 5).until(
-                            EC.presence_of_element_located((By.XPATH, selector))
-                        )
-                        if caption_box:
-                            break
-                    except:
-                        continue
-                
-                if caption_box:
-                    try:
-                        caption_box.click()
-                    except:
-                        driver.execute_script("arguments[0].focus();", caption_box)
-                    
-                    time.sleep(0.5)
-                    caption_box.send_keys(message)
-                    _log(logger, f"✓ Legenda inserida: {message[:50]}...")
-                    time.sleep(1)
-                else:
-                    _log(logger, "⚠️ Campo de legenda não encontrado")
-            except Exception as e:
-                _log(logger, f"⚠️ Erro ao inserir legenda: {e}")
-        
-        # 6. CLICA NO BOTÃO DE ENVIAR
-        _log(logger, "Enviando arquivo(s)...")
-        send_xpath = "//div[@role='button' and @aria-label='Enviar'] | //span[@data-icon='send'] | //span[@data-icon='wds-ic-send-filled']"
-        send_btn = WebDriverWait(driver, 15).until(
-            EC.element_to_be_clickable((By.XPATH, send_xpath))
-        )
-        
+        # procura por inputs do tipo file e retorna o último
+        els = driver.find_elements(By.XPATH, "//input[@type='file']")
+        if not els:
+            # fallback por css
+            els = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
+        if not els:
+            return None
+        # escolher o último criado
+        input_file = els[-1]
+        return input_file
+    except Exception as e:
+        _log(logger, f"Erro localizar_input_file: {e}")
+        return None
+
+def upload_arquivo(driver, file_path, logger=None, timeout=6.3):
+    """
+    Envia caminho ao input[type=file].
+    """
+    try:
+        input_file = localizar_input_file(driver, logger=logger, timeout=timeout)
+        if not input_file:
+            raise Exception("input[type='file'] não encontrado (após abrir painel).")
+        # send_keys com caminho absoluto
+        input_file.send_keys(file_path)
+        time.sleep(1.2)  # dar tempo para o preview ser processado
+        _log(logger, f"upload_arquivo: arquivo enviado ao input ({file_path}).")
+        return True
+    except Exception as e:
+        _log(logger, f"Erro upload_arquivo: {e}")
+        _log(logger, traceback.format_exc())
+        raise
+
+def clicar_enviar_arquivo(driver, logger=None, timeout=6.7):
+    """
+    Clica no botão verde de enviar arquivo (preview).
+    """
+    try:
+        # Tentativa direta: botão com aria-label="Enviar"
+        send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=2)
+        if not send_btn:
+            # fallback: span com ícone de send dentro do preview
+            send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled' or @data-icon='send']", timeout=2)
+        if not send_btn:
+            # fallback: botão verde genérico
+            send_btn = _wait(driver, By.CSS_SELECTOR, "button[aria-label='Enviar']", timeout=2)
+        if not send_btn:
+            raise Exception("Botão para confirmar envio do arquivo não encontrado.")
         try:
             send_btn.click()
-        except:
+        except Exception:
             driver.execute_script("arguments[0].click();", send_btn)
-        
-        _log(logger, "✓ Clique no botão realizado")
-        
-        # 7. AGUARDA CONFIRMAÇÃO REAL DE ENVIO
-        _log(logger, "Aguardando confirmação (até 60s)...")
-        preview_fechou = False
-        try:
-            WebDriverWait(driver, 60).until_not(
-                EC.presence_of_element_located((By.XPATH, "//div[@role='button' and @aria-label='Enviar']"))
-            )
-            preview_fechou = True
-            _log(logger, "✓ Preview fechado - arquivo(s) enviado(s)")
-        except:
-            _log(logger, "⚠️ Timeout aguardando preview fechar")
-        
-        if not preview_fechou:
-            try:
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//div[@role='textbox' and @contenteditable='true']"))
-                )
-                _log(logger, "✓ Retornou à tela de chat")
-            except:
-                _log(logger, "⚠️ Não foi possível confirmar o envio")
-        
-        time.sleep(5)
-        _log(logger, f"✓ {len(file_paths)} arquivo(s) enviado(s) com sucesso")
+        time.sleep(1.0)
+        _log(logger, "clicar_enviar_arquivo: clique realizado.")
         return True
-        
     except Exception as e:
-        _log(logger, f"❌ Erro ao enviar arquivo(s): {e}")
+        _log(logger, f"Erro clicar_enviar_arquivo: {e}")
         _log(logger, traceback.format_exc())
         raise
 
 # --------------------------
-# Função mestre (CORRIGIDA)
+# Funções públicas de envio
 # --------------------------
-def executar_envio(userdir, target, mode, message=None, file_path=None, logger=None, is_scheduled=False):
+def enviar_arquivo(driver, file_path, logger=None):
     """
-    Função mestre: inicializa driver, procura contato e executa envio.
-    
-    CORREÇÃO PRINCIPAL:
-    - Novo parâmetro is_scheduled para diferenciar contextos
-    - Headless APENAS quando is_scheduled=True
-    - Suporte a múltiplos arquivos via lista em file_path
-    
-    Args:
-        userdir: diretório do perfil Chrome
-        target: contato/número
-        mode: 'text', 'file', 'file_text'
-        message: texto da mensagem
-        file_path: str (um arquivo) ou list (múltiplos arquivos)
-        logger: função de log
-        is_scheduled: True se execução é agendada (headless), False se manual (visível)
+    Envia apenas o arquivo (sem legenda).
+    Fluxo:
+    - clicar clip
+    - clicar Documento (ou outra opção necessária)
+    - localizar input[type=file] e enviar caminho
+    - clicar botão de enviar do preview
+    """
+    try:
+        _log(logger, f"Anexando arquivo: {file_path}")
+
+        clicar_clip(driver, logger=logger)
+
+        try:
+            clicar_botao_documento(driver, logger=logger)
+        except Exception:
+            _log(logger, "Opção 'Documento' não encontrada — tentando upload pelo input")
+
+        # upload do arquivo
+        input_file = localizar_input_file(driver, logger)
+        if not input_file:
+            raise Exception("input[type='file'] não encontrado para upload do arquivo")
+
+        input_file.send_keys(file_path)
+        time.sleep(1.2)
+
+        # encontrar o botão de enviar arquivo
+        send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=2)
+        if not send_btn:
+            send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled' or @data-icon='send']", timeout=2)
+
+        if not send_btn:
+            raise Exception("Botão de envio do arquivo não encontrado")
+
+        try:
+            send_btn.click()
+        except Exception as e:
+            _log(logger, "Falha ao clicar botão de enviar arquivo")
+            raise e
+
+        _log(logger, "Arquivo enviado com sucesso")
+        return True
+
+    except Exception as e:
+        _log(logger, f"Erro enviar_arquivo: {e}")
+        raise
+    time.sleep(2)
+
+def enviar_arquivo_com_mensagem(driver, file_path, message, logger=None):
+    """
+    Envia arquivo com legenda (mensagem).
+    Observação: alguns campos de legenda só aparecem após upload; usamos espera.
+    """
+    try:
+        _log(logger, f"Anexando arquivo com legenda: {file_path}")
+
+        clicar_clip(driver, logger=logger)
+
+        try:
+            clicar_botao_documento(driver, logger=logger)
+        except Exception:
+            _log(logger, "Documento não obrigatório — seguindo")
+
+        input_file = localizar_input_file(driver, logger)
+        if not input_file:
+            raise Exception("Não foi possível localizar input[type='file']")
+
+        input_file.send_keys(file_path)
+        time.sleep(1.0)
+
+        caption_candidates = [
+            (By.XPATH, "//div[@role='textbox' and @aria-label='Digite uma mensagem']"),
+            (By.XPATH, "//div[@contenteditable='true' and @data-tab='6']"),
+            (By.CSS_SELECTOR, "div[contenteditable='true']")
+        ]
+
+        caption_box, sel = _find(driver, caption_candidates)
+        if not caption_box:
+            _log(logger, "Caixa de legenda não encontrada — ignorando legenda")
+        else:
+            try:
+                caption_box.click()
+                if message:
+                    caption_box.send_keys(message)
+                    time.sleep(0.4)
+            except Exception as e:
+                raise Exception("Falha ao inserir legenda")
+
+        send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=2)
+        if not send_btn:
+            send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled' or @data-icon='send']", timeout=2)
+
+        if not send_btn:
+            raise Exception("Botão de envio do arquivo+mensagem não encontrado")
+
+        try:
+            send_btn.click()
+        except Exception as e:
+            _log(logger, "Falha ao clicar botão de envio de arquivo + mensagem")
+            raise e
+
+        _log(logger, "Arquivo + mensagem enviados com sucesso")
+        return True
+
+    except Exception as e:
+        _log(logger, f"Erro enviar_arquivo_com_mensagem: {e}")
+        raise
+    time.sleep(3)
+
+# --------------------------
+# Função mestre
+# --------------------------
+def executar_envio(userdir, target, mode, message=None, file_path=None, logger=None):
+    """
+    Função mestre: inicializa driver, procura contato e decide qual envio executar.
+    mode: 'text', 'file', 'file_text'
     """
     driver = None
-    perfil_final = None
 
     try:
-        # Define diretório base
-        if userdir is None:
-            base_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-            userdir = os.path.join(base_dir, "perfil_bot_whatsapp")
-
-        # CORREÇÃO: Para execução manual, não clona perfil (evita problemas)
-        if is_scheduled:
-            # Apenas agendamentos usam perfil temporário
-            perfil_final = criar_perfil_temporario(userdir, logger)
-        else:
-            # Execução manual usa perfil direto
-            perfil_final = userdir
-            _log(logger, f"Usando perfil direto: {perfil_final}")
-
-        # CORREÇÃO: Headless APENAS se for execução agendada
-        usar_headless = is_scheduled
-        
-        driver = iniciar_driver(userdir=perfil_final, headless=usar_headless, logger=logger)
-        
         vezes_executadas = contador_execucao(incrementar=False)
+        usar_headless = False #if vezes_executadas >=3 else False
+
         if logger:
             logger(f'Execução número {vezes_executadas}')
-            logger(f'Modo: {"Headless (agendado)" if usar_headless else "Visível (manual)"}')
+            '''if usar_headless:
+                logger('A partir de agora, as automações rodarão em segundo plano.')'''
 
-        # Procura contato
+        driver = iniciar_driver(userdir=userdir, headless=usar_headless, logger=logger)
         procurar_contato_grupo(driver, target, logger=logger)
-        time.sleep(2.0)
+        time.sleep(1.0)
 
-        # Executa o modo selecionado
         if mode == "text":
             if not message:
                 raise Exception("Modo 'text' selecionado mas nenhuma mensagem fornecida.")
             enviar_mensagem_simples(driver, message, logger=logger)
-            
         elif mode == "file":
             if not file_path:
                 raise Exception("Modo 'file' selecionado mas nenhum arquivo fornecido.")
-            # CORREÇÃO: Usa nova função que suporta múltiplos arquivos
-            enviar_arquivos(driver, file_path, message=None, headless=usar_headless, logger=logger)
-            
+            enviar_arquivo(driver, file_path, logger=logger)
         elif mode == "file_text":
             if not file_path:
                 raise Exception("Arquivo necessário para modo 'file_text'.")
-            # CORREÇÃO: Usa nova função que suporta múltiplos arquivos + legenda
-            enviar_arquivos(driver, file_path, message=message or "", headless=usar_headless, logger=logger)
-            
+            enviar_arquivo_com_mensagem(driver, file_path, message or "", logger=logger)
         else:
             raise Exception("Modo desconhecido.")
-        
-        _log(logger, "Aguardando confirmação final...")
-        time.sleep(8)
-        
-        _log(logger, "=" * 50)
-        _log(logger, "✓✓✓ ENVIO CONCLUÍDO COM SUCESSO ✓✓✓")
-        _log(logger, "=" * 50)
-        
         return True
-        
     except Exception as e:
-        _log(logger, f"❌ Erro em executar_envio: {str(e)}")
+        _log(logger, f"Erro em executar_envio: {str(e)}")
         _log(logger, traceback.format_exc())
         raise
-        
     finally:
+        # SIMPLES: Fecha o driver se ele existir
         if driver:
             try:
-                _log(logger, "Aguardando antes de fechar (10s)...")
-                time.sleep(10)
-                _log(logger, "Finalizando driver...")
-                driver.quit()
+                time.sleep(10)  # Espera 10 segundos antes de fechar para caso envie um arquivo maior
                 driver.close()
+                driver.quit()
                 _log(logger, "Driver finalizado.")
-            except Exception as e:
-                _log(logger, f"Erro ao fechar driver: {e}")
-        
-        # Remove perfil temporário APENAS se foi criado
-        if perfil_final and perfil_final != userdir and is_scheduled:
-            try:
-                time.sleep(3)
-                shutil.rmtree(perfil_final, ignore_errors=True)
-                _log(logger, f"Perfil temporário removido: {perfil_final}")
-            except Exception as e:
-                _log(logger, f"Aviso: Não foi possível remover perfil temporário: {e}")
+            except:
+                pass  # Se der erro ao fechar, continua
