@@ -35,14 +35,15 @@ def run_auto(json_path):
         message = dados.get("message")
         file_path = dados.get("file_path")
 
-        # Chama a função mestre j
+        # Chama a função mestre com modo_execucao='auto'
         executar_envio(
-            userdir=None, # O iniciar_driver achará o perfil
+            userdir=None,
             target=target,
             mode=mode,
             message=message,
             file_path=file_path,
-            logger=lambda m: print(f"[AUTO-LOG] {m}")
+            logger=lambda m: print(f"[AUTO-LOG] {m}"),
+            modo_execucao='auto'  # ← ADICIONADO
         )
         print("✓ Automação agendada concluída com sucesso.")
         
@@ -50,6 +51,7 @@ def run_auto(json_path):
         print(f"❌ Erro na execução automática: {e}")
         traceback.print_exc()
         sys.exit(1)
+
 # --------------------------
 # Utilitários internos
 # --------------------------
@@ -135,10 +137,12 @@ def contador_execucao(incrementar=True):
 # --------------------------
 # Driver
 # --------------------------
-def iniciar_driver(userdir=None, headless=False, timeout=60, logger=None):
+def iniciar_driver(userdir=None, modo_execucao='manual', timeout=60, logger=None):
     """
     Inicia undetected_chromedriver com perfil persistente.
-    FAKE HEADLESS: janela fora da tela com proporção diferente.
+    
+    Args:
+        modo_execucao: 'manual' = Chrome visível | 'auto' = fake headless
     """
     try:
         if userdir is None:
@@ -156,19 +160,18 @@ def iniciar_driver(userdir=None, headless=False, timeout=60, logger=None):
                 logger(f"Criado novo perfil Chrome em: {userdir}")
 
         if logger:
-            logger(f"Iniciando Chrome com profile: {userdir}")
+            logger(f"Iniciando Chrome com profile: {userdir} | modo: {modo_execucao}")
+
+        # DEBUG EXPLÍCITO
+        print(f"========================================")
+        print(f"DEBUG iniciar_driver():")
+        print(f"  modo_execucao recebido: '{modo_execucao}'")
+        print(f"  userdir: {userdir}")
+        print(f"========================================")
 
         options = uc.ChromeOptions()
         options.add_argument(f"--user-data-dir={userdir}")
-
-        # ==============================
-        # FAKE HEADLESS (SEM --headless)
-        # ==============================
-        options.add_argument("--window-position=-32000,-32000")
-        options.add_argument("--window-size=1366,768")  # proporção diferente
-        options.add_argument("--disable-backgrounding-occluded-windows")
-
-        # Flags de estabilidade
+        # Flags de estabilidade (aplicadas sempre)
         options.add_argument("--disable-notifications")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
@@ -178,14 +181,39 @@ def iniciar_driver(userdir=None, headless=False, timeout=60, logger=None):
         options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
 
+        # ==============================
+        # MODO DE EXECUÇÃO
+        # ==============================
+        if modo_execucao == 'auto':
+            # FAKE HEADLESS (janela fora da tela) - SOMENTE NO MODO AUTO
+            print(f"  ✓ APLICANDO FAKE HEADLESS (modo auto)")
+            options.add_argument("--window-position=9999,9999")
+            options.add_argument("--window-size=800,600")
+            #options.add_argument('--minimize-window')
+            options.add_argument("--disable-backgrounding-occluded-windows")
+            if logger:
+                logger("⚙️ Chrome configurado em FAKE HEADLESS (modo automático).")
+        else:
+            # MODO MANUAL (janela visível) - NÃO ADICIONA NADA ESPECIAL
+            print(f"  ✓ MODO VISÍVEL (modo manual) - SEM fake headless")
+            options.add_argument("--start-maximized")
+            options.add_argument("--window-position=0,0")
+            if logger:
+                logger("⚙️ Chrome configurado em modo VISÍVEL (execução manual).")
+        
+        print(f"========================================\n")
+
         driver = uc.Chrome(options=options)
         driver.set_page_load_timeout(timeout)
+        #driver.maximize_window()
+        if modo_execucao != 'auto':
+            driver.set_window_position(0, 0)
+            driver.maximize_window()
 
         if logger:
-            logger("Chrome iniciado em FAKE HEADLESS. Acessando WhatsApp Web...")
+            logger("Chrome iniciado. Acessando WhatsApp Web...")
 
         driver.get("https://web.whatsapp.com")
-
         wait_time = 10
         if logger:
             logger(f"Aguardando {wait_time} segundos para carregar WhatsApp...")
@@ -211,7 +239,7 @@ def iniciar_driver(userdir=None, headless=False, timeout=60, logger=None):
 # --------------------------
 # Buscar contato / abrir chat
 # --------------------------
-def procurar_contato_grupo(driver, target, logger=None, timeout=2):
+def procurar_contato_grupo(driver, target, logger=None, timeout=1.3):
     """
     Busca e abre a conversa com o contato/grupo pelo nome exato.
     Tenta vários seletores da caixa de busca; se falhar tenta clicar primeiro chat.
@@ -229,7 +257,7 @@ def procurar_contato_grupo(driver, target, logger=None, timeout=2):
         if not search_box:
             _log(logger, "Campo de busca não encontrado via seletores comuns. Tentando abrir primeiro chat como fallback...")
             # fallback: abrir primeiro chat da lista
-            first_chat = _wait_clickable(driver, By.CSS_SELECTOR, "div[role='listitem']", timeout=2)
+            first_chat = _wait_clickable(driver, By.CSS_SELECTOR, "div[role='listitem']", timeout=1)
             if first_chat:
                 try:
                     first_chat.click()
@@ -268,7 +296,7 @@ def procurar_contato_grupo(driver, target, logger=None, timeout=2):
 # --------------------------
 # Mensagem de texto
 # --------------------------
-def enviar_mensagem_simples(driver, message, logger=None, timeout=4):
+def enviar_mensagem_simples(driver, message, logger=None, timeout=0.5):
     """
     Envia apenas mensagem de texto no chat já aberto.
     """
@@ -287,14 +315,14 @@ def enviar_mensagem_simples(driver, message, logger=None, timeout=4):
             msg_box.click()
         except Exception:
             driver.execute_script("arguments[0].focus();", msg_box)
-        time.sleep(0.2)
+        time.sleep(0.01)
         msg_box.send_keys(message)
-        time.sleep(0.3)
+        time.sleep(0.01)
 
         # tentar clicar no botão de enviar (setinha) primeiro; se não, enviar Enter
-        send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled']", timeout=2)
+        send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled']", timeout=1)
         if not send_btn:
-            send_btn = _wait(driver, By.CSS_SELECTOR, "span[data-icon='send']", timeout=2)
+            send_btn = _wait(driver, By.CSS_SELECTOR, "span[data-icon='send']", timeout=1)
         if not send_btn:
             logger_msg = "Botão de enviar não encontrado; enviando com Enter."
             _log(logger, logger_msg)
@@ -344,10 +372,10 @@ def clicar_botao_documento(driver, logger=None):
     """
     # tenta localizar span com texto "Documento" e subir para o pai clicável
     try:
-        el = _wait(driver, By.XPATH, "//span[normalize-space()='Documento']/parent::div", timeout=3)
+        el = _wait(driver, By.XPATH, "//span[normalize-space()='Documento']/parent::div", timeout=1)
         if not el:
             # fallback: localizar elemento pelo title/text parcial
-            el = _wait(driver, By.XPATH, "//*[normalize-space()='Documento']", timeout=2)
+            el = _wait(driver, By.XPATH, "//*[normalize-space()='Documento']", timeout=1)
             if el:
                 el = el.find_element(By.XPATH, "./ancestor::div[1]")
         if not el:
@@ -363,7 +391,7 @@ def clicar_botao_documento(driver, logger=None):
         _log(logger, f"Erro clicar_botao_documento: {e}")
         raise
 
-def localizar_input_file(driver, logger=None, timeout=2.5):
+def localizar_input_file(driver, logger=None, timeout=2):
     """
     Retorna o input[type='file'] mais provável (último no DOM), que é o que o WhatsApp usa.
     """
@@ -382,7 +410,7 @@ def localizar_input_file(driver, logger=None, timeout=2.5):
         _log(logger, f"Erro localizar_input_file: {e}")
         return None
 
-def upload_arquivo(driver, file_path, logger=None, timeout=6.3):
+def upload_arquivo(driver, file_path, logger=None, timeout=1):
     """
     Envia caminho ao input[type=file].
     """
@@ -455,7 +483,7 @@ def enviar_arquivo(driver, file_path, logger=None):
             raise Exception("input[type='file'] não encontrado para upload do arquivo")
 
         input_file.send_keys(file_path)
-        time.sleep(1.2)
+        time.sleep(1)
 
         # encontrar o botão de enviar arquivo
         send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=2)
@@ -519,9 +547,9 @@ def enviar_arquivo_com_mensagem(driver, file_path, message, logger=None):
             except Exception as e:
                 raise Exception("Falha ao inserir legenda")
 
-        send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=2)
+        send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=1)
         if not send_btn:
-            send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled' or @data-icon='send']", timeout=2)
+            send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled' or @data-icon='send']", timeout=1)
 
         if not send_btn:
             raise Exception("Botão de envio do arquivo+mensagem não encontrado")
@@ -543,23 +571,33 @@ def enviar_arquivo_com_mensagem(driver, file_path, message, logger=None):
 # --------------------------
 # Função mestre
 # --------------------------
-def executar_envio(userdir, target, mode, message=None, file_path=None, logger=None):
+def executar_envio(userdir, target, mode, message=None, file_path=None, logger=None, modo_execucao='manual'):
     """
     Função mestre: inicializa driver, procura contato e decide qual envio executar.
-    mode: 'text', 'file', 'file_text'
+    
+    Args:
+        mode: 'text', 'file', 'file_text'
+        modo_execucao: 'manual' (visível) ou 'auto' (fake headless)
     """
     driver = None
 
     try:
         vezes_executadas = contador_execucao(incrementar=False)
-        usar_headless = False #if vezes_executadas >=3 else False
+
+        # DEBUG EXPLÍCITO
+        print(f"\n{'='*60}")
+        print(f"DEBUG executar_envio():")
+        print(f"  modo_execucao recebido: '{modo_execucao}'")
+        print(f"  target: {target}")
+        print(f"  mode: {mode}")
+        print(f"  execuções anteriores: {vezes_executadas}")
+        print(f"{'='*60}\n")
 
         if logger:
             logger(f'Execução número {vezes_executadas}')
-            '''if usar_headless:
-                logger('A partir de agora, as automações rodarão em segundo plano.')'''
+            logger(f'Modo de execução: {modo_execucao}')
 
-        driver = iniciar_driver(userdir=userdir, headless=usar_headless, logger=logger)
+        driver = iniciar_driver(userdir=userdir, modo_execucao=modo_execucao, logger=logger)
         procurar_contato_grupo(driver, target, logger=logger)
         time.sleep(1.0)
 

@@ -101,7 +101,7 @@ def main(task_id: str):
             message=task.get("message"),
             file_path=task.get("file_path"),
             logger=logger,
-            headless=True
+            modo_execucao='auto'
         )
 
         # ===== FINALIZA =====

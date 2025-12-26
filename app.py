@@ -2,14 +2,9 @@ import sys
 import os
 from datetime import datetime
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
 from ui.main_window import MainWindow
 from core.automation import executar_envio, contador_execucao
-
-'''BASE_DIR = getattr(
-    sys,
-    "_MEIPASS",
-    os.path.abspath(os.path.dirname(__file__))
-)'''
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -65,6 +60,9 @@ def run_gui():
 
     window = MainWindow()
     window.show()
+    window.raise_()
+    window.activateWindow()
+    
     sys.exit(app.exec())
 
 # --- EXECUÇÃO PRINCIPAL ---
@@ -88,9 +86,9 @@ if __name__ == "__main__":
                 mode=dados["mode"],
                 message=dados.get("message"),
                 file_path=dados.get("file_path"),
+                modo_execucao='auto'  # ← FAKE HEADLESS para agendamentos
             )
 
-            
             print("DEBUG: Automação finalizada. Encerrando processo.")
             sys.exit(0)
         except Exception as e:
