@@ -189,6 +189,37 @@ class SchedulerDB:
         conn.close()
         
         return rows
+    
+    def obter_por_id(self, task_id: int) -> Optional[dict]:
+        """Busca um agendamento pelo ID e retorna como dicionário"""
+        conn = self._get_conn()
+        conn.row_factory = sqlite3.Row 
+        cur = conn.cursor()
+        
+        try:
+            cur.execute("SELECT * FROM agendamentos WHERE id = ?", (task_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def atualizar_agendamento_completo(self, task_id, target, mode, message, file_path, scheduled_time):
+        """Método para permitir a edição de um agendamento existente"""
+        conn = self._get_conn()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                UPDATE agendamentos 
+                SET target = ?, mode = ?, message = ?, file_path = ?, scheduled_time = ?, status = 'pending'
+                WHERE id = ?
+            """, (target, mode, message, file_path, scheduled_time.isoformat(), task_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Erro ao editar DB: {e}")
+            return False
+        finally:
+            conn.close()
 
     def obter_detalhes(self, identificador) -> Optional[dict]:
         """

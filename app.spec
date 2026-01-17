@@ -1,5 +1,6 @@
-# app.spec - ADICIONAR ESTAS LINHAS
+# -*- mode: python ; coding: utf-8 -*-
 import os
+import sys
 from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
 
@@ -9,11 +10,13 @@ BASE_DIR = os.getcwd()
 # COLETA TODAS AS DEPENDÊNCIAS
 # =============================
 
-# Coleta dados do undetected_chromedriver
+# Coleta dados automáticos para bibliotecas complexas
 uc_data = collect_data_files('undetected_chromedriver', include_py_files=False)
 selenium_data = collect_data_files('selenium', include_py_files=False)
+# tkcalendar e babel são essenciais para o seletor de data funcionar no executável
+babel_data = collect_data_files('babel', include_py_files=False)
 
-# Hidden imports críticos
+# Hidden imports críticos para automação e componentes de UI
 hiddenimports = [
     'undetected_chromedriver._compat',
     'undetected_chromedriver.patcher',
@@ -36,17 +39,21 @@ hiddenimports = [
     'urllib3.contrib',
     'urllib3.contrib.pyopenssl',
     'charset_normalizer',
-    'sqlite3',  # ADICIONADO
-    'json',     # ADICIONADO
-    'pathlib',  # ADICIONADO
-    'datetime', # ADICIONADO
+    'sqlite3',
+    'json',
+    'pathlib',
+    'datetime',
+    'tkcalendar',
+    'babel.numbers', 
+    'babel.localedata', # Localização para datas em PT-BR
 ]
 
-# Adiciona todos os submódulos
-for pkg in ['selenium', 'undetected_chromedriver', 'PySide6', 'websocket', 'sqlite3']:
+# Adiciona submódulos para garantir que nada fique de fora
+for pkg in ['selenium', 'undetected_chromedriver', 'websocket', 'sqlite3', 'customtkinter', 'babel']:
     hiddenimports.extend(collect_submodules(pkg))
 
-# Dados do projeto
+# Definição das pastas e arquivos de dados do projeto
+# Incluímos as pastas de sistema para que os caminhos relativos funcionem no PC do cliente
 datas = [
     ("ui", "ui"),
     ("core", "core"),
@@ -55,8 +62,12 @@ datas = [
     ("scheduled_tasks", "scheduled_tasks"),
 ]
 
-# Adiciona dados coletados
-datas += uc_data + selenium_data
+# Verifica se o arquivo de contador existe antes de incluir para evitar erro no build
+if os.path.exists("execution_count.txt"):
+    datas.append(("execution_count.txt", "."))
+
+# Mescla os dados coletados das bibliotecas
+datas += uc_data + selenium_data + babel_data
 
 # =============================
 # ANÁLISE
@@ -70,19 +81,9 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     excludes=[
-        "pytest",
-        "unittest",
-        "tkinter.test",
-        "matplotlib",
-        "numpy",
-        "pandas",
-        "scipy",
-        "IPython",
-        "jupyter",
-        "notebook",
-        "test",
-        "tests",
-        "__pycache__",
+        "pytest", "unittest", "tkinter.test", "matplotlib", "numpy", 
+        "pandas", "scipy", "IPython", "jupyter", "notebook", 
+        "test", "tests", "__pycache__"
     ],
     noarchive=False,
     cipher=None,
@@ -90,22 +91,23 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
+# =============================
+# EXECUTÁVEL (Modo Onedir)
+# =============================
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
+    [],  
+    exclude_binaries=True,
     name="Study Practices",
-    debug=False,  # Mude para False em produção
+    debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    uac_admin=True,  # IMPORTANTE: Permite criar tarefas agendadas
+    uac_admin=True, 
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # Mantenha True para ver logs
+    console=False, # Oculta a janela preta do CMD
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
@@ -113,6 +115,9 @@ exe = EXE(
     icon=os.path.join("resources", "Taty_s-English-Logo.ico"),
 )
 
+# =============================
+# COLEÇÃO (Geração da Pasta Final)
+# =============================
 coll = COLLECT(
     exe,
     a.binaries,
@@ -121,5 +126,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="dist/Study Practices"
+    name="Study Practices" 
 )

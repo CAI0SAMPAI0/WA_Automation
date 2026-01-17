@@ -1,4 +1,4 @@
-import sys
+'''import sys
 import os
 from datetime import datetime
 from PySide6.QtWidgets import QApplication
@@ -97,4 +97,80 @@ if __name__ == "__main__":
     
     # Se não for modo auto, abre a interface normal
     else:
+        run_gui()'''
+
+# app ctk
+
+import sys
+import os
+from datetime import datetime
+import json
+import argparse
+# Importando a nova janela
+from ui.main_window import App 
+from core.automation import executar_envio, contador_execucao
+from core.db import db
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+PROFILE_DIR = os.path.normpath(os.path.abspath(os.path.join(BASE_DIR, "perfil_bot_whatsapp")))
+
+def ensure_profile_dir():
+    os.makedirs(PROFILE_DIR, exist_ok=True)
+
+def run_gui():
+    ensure_profile_dir()
+    app = App()
+    app.mainloop()
+
+if __name__ == "__main__":
+    # Usando argparse para capturar os argumentos de forma limpa
+    parser = argparse.ArgumentParser(description="WhatsApp Automation App")
+    parser.add_argument("--auto", help="Caminho do arquivo JSON de configuração")
+    parser.add_argument("--task_id", type=int, help="ID da tarefa no banco de dados")
+    
+    # Ignora argumentos desconhecidos para não quebrar a GUI
+    args, unknown = parser.parse_known_args()
+
+    if args.auto:
+        task_id = args.task_id
+        try:
+            # 1. Carrega os dados do JSON
+            with open(args.auto, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+
+            # 2. Atualiza o status no banco para 'running' (se o task_id existir)
+            if task_id:
+                db.atualizar_status(task_id, 'running')
+
+            # 3. Executa a automação
+            executar_envio(
+                userdir=PROFILE_DIR,
+                target=dados["target"],
+                mode=dados["mode"],
+                message=dados.get("message"),
+                file_path=dados.get("file_path"),
+                modo_execucao='auto'
+            )
+
+            # 4. Sucesso: Atualiza o banco e o contador
+            if task_id:
+                db.atualizar_status(task_id, 'completed')
+                
+            if callable(contador_execucao):
+                contador_execucao(True)
+                
+            sys.exit(0)
+
+        except Exception as e:
+            # 5. Erro: Registra a falha no banco para o usuário ver na UI
+            print(f"ERRO CRÍTICO NA EXECUÇÃO AUTO: {e}")
+            if task_id:
+                db.registrar_erro(task_id, str(e))
+            sys.exit(1)
+    else:
+        # Se não houver flag --auto, abre a interface gráfica normalmente
         run_gui()

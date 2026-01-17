@@ -8,13 +8,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import pyperclip
 
 
 # Delays (ajustáveis)
-WHATSAPP_LOAD = 10
+WHATSAPP_LOAD = 20
 SHORT_DELAY = 1.0
-MID_DELAY = 1.6
-LONG_DELAY = 2.0
+MID_DELAY = 2.0
+LONG_DELAY = 3.0
 
 # --- FUNÇÃO PARA AGENDAMENTO ---
 def run_auto(json_path):
@@ -35,9 +36,16 @@ def run_auto(json_path):
         message = dados.get("message")
         file_path = dados.get("file_path")
 
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        
+        current_profile = os.path.join(base_dir, "perfil_bot_whatsapp")
+
         # Chama a função mestre com modo_execucao='auto'
         executar_envio(
-            userdir=None,
+            userdir=current_profile,
             target=target,
             mode=mode,
             message=message,
@@ -66,14 +74,14 @@ def _log(logger, msg):
         # fallback simples para stdout
         print(msg)
 
-def _wait(driver, by, selector, timeout=10):
+def _wait(driver, by, selector, timeout=2):
     """Espera por presença de elemento e retorna WebElement ou None."""
     try:
         return WebDriverWait(driver, timeout).until(EC.presence_of_element_located((by, selector)))
     except Exception:
         return None
 
-def _wait_clickable(driver, by, selector, timeout=10):
+def _wait_clickable(driver, by, selector, timeout=2):
     """Espera por elemento clicável."""
     try:
         return WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((by, selector)))
@@ -87,16 +95,13 @@ def _find(driver, candidates):
     """
     for by, sel in candidates:
         try:
-            el = _wait(driver, by, sel, timeout=6)
+            el = _wait(driver, by, sel, timeout=2)
             if el:
                 return el, (by, sel)
         except Exception:
             continue
     return None, None
 
-# --------------------------
-# Headless a partir da 3ª execução
-# --------------------------
 
 def contador_execucao(incrementar=True):
     import sys
@@ -137,7 +142,7 @@ def contador_execucao(incrementar=True):
 # --------------------------
 # Driver
 # --------------------------
-def iniciar_driver(userdir=None, modo_execucao='manual', timeout=60, logger=None):
+def iniciar_driver(userdir=None, modo_execucao='manual', timeout=20, logger=None):
     """
     Inicia undetected_chromedriver com perfil persistente.
     
@@ -171,11 +176,13 @@ def iniciar_driver(userdir=None, modo_execucao='manual', timeout=60, logger=None
 
         options = uc.ChromeOptions()
         options.add_argument(f"--user-data-dir={userdir}")
-        # Flags de estabilidade (aplicadas sempre)
+        options.add_argument("--ignore-certificate-errors")
         options.add_argument("--disable-notifications")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
+        options.add_argument('--disable-software-rasterizer')
+        options.add_argument('--js-flags="--max-old-space-size=512"')
         options.add_argument("--disable-infobars")
         options.add_argument("--disable-extensions")
         options.add_argument("--no-first-run")
@@ -203,8 +210,9 @@ def iniciar_driver(userdir=None, modo_execucao='manual', timeout=60, logger=None
         
         print(f"========================================\n")
 
-        driver = uc.Chrome(options=options)
-        driver.set_page_load_timeout(timeout)
+        driver = uc.Chrome(options=options, use_subprocess=True)
+        driver.browser_pid = driver.browser_pid
+        driver.set_page_load_timeout(10)
         #driver.maximize_window()
         if modo_execucao != 'auto':
             driver.set_window_position(0, 0)
@@ -212,9 +220,9 @@ def iniciar_driver(userdir=None, modo_execucao='manual', timeout=60, logger=None
 
         if logger:
             logger("Chrome iniciado. Acessando WhatsApp Web...")
-
+        time.sleep(2)
         driver.get("https://web.whatsapp.com")
-        wait_time = 10
+        wait_time = 20
         if logger:
             logger(f"Aguardando {wait_time} segundos para carregar WhatsApp...")
         time.sleep(wait_time)
@@ -239,7 +247,7 @@ def iniciar_driver(userdir=None, modo_execucao='manual', timeout=60, logger=None
 # --------------------------
 # Buscar contato / abrir chat
 # --------------------------
-def procurar_contato_grupo(driver, target, logger=None, timeout=1.3):
+def procurar_contato_grupo(driver, target, logger=None, timeout=1):
     """
     Busca e abre a conversa com o contato/grupo pelo nome exato.
     Tenta vários seletores da caixa de busca; se falhar tenta clicar primeiro chat.
@@ -257,7 +265,8 @@ def procurar_contato_grupo(driver, target, logger=None, timeout=1.3):
         if not search_box:
             _log(logger, "Campo de busca não encontrado via seletores comuns. Tentando abrir primeiro chat como fallback...")
             # fallback: abrir primeiro chat da lista
-            first_chat = _wait_clickable(driver, By.CSS_SELECTOR, "div[role='listitem']", timeout=1)
+            first_chat = _wait_clickable(driver, By.CSS_SELECTOR, "div[role='listitem']")
+            time.sleep(0.01)
             if first_chat:
                 try:
                     first_chat.click()
@@ -272,7 +281,7 @@ def procurar_contato_grupo(driver, target, logger=None, timeout=1.3):
             search_box.click()
         except Exception:
             driver.execute_script("arguments[0].focus();", search_box)
-        time.sleep(0.2)
+        time.sleep(0.5)
         try:
             # limpar (Ctrl+A + Del)
             search_box.send_keys(Keys.CONTROL + "a")
@@ -280,11 +289,11 @@ def procurar_contato_grupo(driver, target, logger=None, timeout=1.3):
         except Exception:
             # fallback: executar script para limpar
             driver.execute_script("arguments[0].innerText = '';", search_box)
-        time.sleep(0.2)
+        time.sleep(0.5)
         search_box.send_keys(target)
-        time.sleep(SHORT_DELAY)
+        time.sleep(1)
         search_box.send_keys(Keys.ENTER)
-        time.sleep(MID_DELAY)
+        time.sleep(0.5)
 
         _log(logger, "Contato/grupo aberto.")
         return True
@@ -296,9 +305,10 @@ def procurar_contato_grupo(driver, target, logger=None, timeout=1.3):
 # --------------------------
 # Mensagem de texto
 # --------------------------
-def enviar_mensagem_simples(driver, message, logger=None, timeout=0.5):
+
+def enviar_mensagem_simples(driver, message, logger=None, timeout=1):
     """
-    Envia apenas mensagem de texto no chat já aberto.
+    Envia mensagem de texto no chat aberto, respeitando quebras de linha com Shift+Enter.
     """
     try:
         _log(logger, "Enviando mensagem de texto...")
@@ -307,6 +317,7 @@ def enviar_mensagem_simples(driver, message, logger=None, timeout=0.5):
             (By.XPATH, "//div[@contenteditable='true' and (@data-tab='10' or @data-tab='6')]"),
             (By.CSS_SELECTOR, "footer div[contenteditable='true']"),
         ]
+        
         msg_box, sel = _find(driver, msg_candidates)
         if not msg_box:
             raise Exception("Campo de mensagem não encontrado.")
@@ -315,28 +326,39 @@ def enviar_mensagem_simples(driver, message, logger=None, timeout=0.5):
             msg_box.click()
         except Exception:
             driver.execute_script("arguments[0].focus();", msg_box)
-        time.sleep(0.01)
-        msg_box.send_keys(message)
-        time.sleep(0.01)
+        
+        time.sleep(0.5)
 
-        # tentar clicar no botão de enviar (setinha) primeiro; se não, enviar Enter
+        # --- CORREÇÃO: Envia linha por linha com SHIFT+ENTER ---
+        linhas = message.split('\n')
+        for i, linha in enumerate(linhas):
+            msg_box.send_keys(linha)
+            if i < len(linhas) - 1:  # Se não for a última linha, pula para a próxima
+                msg_box.send_keys(Keys.SHIFT + Keys.ENTER)
+        
+        # Removido: msg_box.send_keys(message) <- Isso duplicaria o texto
+        time.sleep(0.5)
+
+        # Tentar localizar o botão de enviar (ícone da setinha)
         send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled']", timeout=1)
         if not send_btn:
             send_btn = _wait(driver, By.CSS_SELECTOR, "span[data-icon='send']", timeout=1)
-        if not send_btn:
-            logger_msg = "Botão de enviar não encontrado; enviando com Enter."
-            _log(logger, logger_msg)
-            raise Exception(logger_msg)
+
+        # Se achar o botão, clica. Se não, usa o Enter para enviar.
+        if send_btn:
             try:
                 send_btn.click()
-            except Exception as e:
+                _log(logger, "Mensagem enviada via clique no botão.")
+            except Exception:
                 msg_box.send_keys(Keys.ENTER)
+                _log(logger, "Botão encontrado mas sem clique; enviado via Enter.")
         else:
             msg_box.send_keys(Keys.ENTER)
+            _log(logger, "Botão de enviar não encontrado; enviado via Enter.")
 
         time.sleep(SHORT_DELAY)
-        _log(logger, "Mensagem enviada.")
         return True
+
     except Exception as e:
         _log(logger, f"Erro enviar_mensagem_simples: {str(e)}")
         _log(logger, traceback.format_exc())
@@ -361,31 +383,47 @@ def clicar_clip(driver, logger=None):
         el.click()
     except Exception:
         driver.execute_script("arguments[0].click();", el)
-    time.sleep(0.6)
+    time.sleep(0.5)
     _log(None, f"clicar_clip: clique realizado ({sel}).")
     return True
 
-def clicar_botao_documento(driver, logger=None):
+def clicar_botao_documento(driver, file_path, logger=None):
     """
-    Clica na opção 'Documento' dentro do painel de anexos.
-    Usa o texto visível 'Documento' como referência (mais estável).
+    Diferencia entre WhatsApp Normal e Business para garantir o envio como mídia.
     """
-    # tenta localizar span com texto "Documento" e subir para o pai clicável
     try:
-        el = _wait(driver, By.XPATH, "//span[normalize-space()='Documento']/parent::div", timeout=1)
+        ext = os.path.splitext(file_path.lower())[1]
+        is_media = ext in ['.jpg', '.jpeg', '.png', '.gif', '.mp4']
+        
+        if is_media:
+            _log(logger, "Selecionando Fotos e Vídeos (Business)...")
+            tipo_candidates = [
+                (By.CSS_SELECTOR, "div[role='button'] span[data-icon='attach-image']"), # Universal
+                (By.XPATH, "//div[contains(@aria-label, 'Fotos')]"), # Acessibilidade
+                (By.XPATH, "/html/body/div[1]/div/div/div/div/span[6]/div/ul/div/div/div[2]/li"), # Seu XPath
+                (By.CSS_SELECTOR, "li:nth-child(2) div span") # Seu CSS simplificado
+            ]
+        else:
+            _log(logger, "Selecionando Documentos (Business)...")
+            tipo_candidates = [
+                (By.CSS_SELECTOR, "div[role='button'] span[data-icon='attach-document']"),
+                (By.XPATH, "/html/body/div[1]/div/div/div/div/span[6]/div/ul/div/div/div[1]/li"), # Seu XPath
+                (By.CSS_SELECTOR, "li:nth-child(1) div span") # Seu CSS
+            ]
+
+        el, sel = _find(driver, tipo_candidates)
+        
         if not el:
-            # fallback: localizar elemento pelo title/text parcial
-            el = _wait(driver, By.XPATH, "//*[normalize-space()='Documento']", timeout=1)
-            if el:
-                el = el.find_element(By.XPATH, "./ancestor::div[1]")
+            # Fallback para WhatsApp Normal (caso os seletores acima falhem)
+            _log(logger, "Tentando fallback para WhatsApp Normal...")
+            el = _wait(driver, By.XPATH, "//span[contains(., 'Fotos')] | //span[contains(., 'Documento')]", timeout=2)
+
         if not el:
-            raise Exception("Botão 'Documento' não encontrado no painel de anexos.")
-        try:
-            el.click()
-        except Exception:
-            driver.execute_script("arguments[0].click();", el)
-        time.sleep(0.5)
-        _log(logger, "Opção 'Documento' clicada.")
+            raise Exception("Não foi possível encontrar a opção de anexo no menu.")
+        
+        # Clica via JavaScript para garantir que o clique aconteça mesmo se o menu estiver animando
+        driver.execute_script("arguments[0].click();", el)
+        time.sleep(2)
         return True
     except Exception as e:
         _log(logger, f"Erro clicar_botao_documento: {e}")
@@ -420,7 +458,7 @@ def upload_arquivo(driver, file_path, logger=None, timeout=1):
             raise Exception("input[type='file'] não encontrado (após abrir painel).")
         # send_keys com caminho absoluto
         input_file.send_keys(file_path)
-        time.sleep(1.2)  # dar tempo para o preview ser processado
+        time.sleep(2)  # dar tempo para o preview ser processado
         _log(logger, f"upload_arquivo: arquivo enviado ao input ({file_path}).")
         return True
     except Exception as e:
@@ -428,145 +466,208 @@ def upload_arquivo(driver, file_path, logger=None, timeout=1):
         _log(logger, traceback.format_exc())
         raise
 
-def clicar_enviar_arquivo(driver, logger=None, timeout=6.7):
-    """
-    Clica no botão verde de enviar arquivo (preview).
-    """
-    try:
-        # Tentativa direta: botão com aria-label="Enviar"
-        send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=2)
-        if not send_btn:
-            # fallback: span com ícone de send dentro do preview
-            send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled' or @data-icon='send']", timeout=2)
-        if not send_btn:
-            # fallback: botão verde genérico
-            send_btn = _wait(driver, By.CSS_SELECTOR, "button[aria-label='Enviar']", timeout=2)
-        if not send_btn:
-            raise Exception("Botão para confirmar envio do arquivo não encontrado.")
-        try:
-            send_btn.click()
-        except Exception:
-            driver.execute_script("arguments[0].click();", send_btn)
-        time.sleep(1.0)
-        _log(logger, "clicar_enviar_arquivo: clique realizado.")
-        return True
-    except Exception as e:
-        _log(logger, f"Erro clicar_enviar_arquivo: {e}")
-        _log(logger, traceback.format_exc())
-        raise
-
-# --------------------------
-# Funções públicas de envio
-# --------------------------
 def enviar_arquivo(driver, file_path, logger=None):
     """
-    Envia apenas o arquivo (sem legenda).
-    Fluxo:
-    - clicar clip
-    - clicar Documento (ou outra opção necessária)
-    - localizar input[type=file] e enviar caminho
-    - clicar botão de enviar do preview
+    Envia arquivos um por um para evitar o erro 'invalid argument'.
     """
     try:
-        _log(logger, f"Anexando arquivo: {file_path}")
+        # Garante que file_path seja uma lista, mesmo que venha do agendamento como string
+        paths = file_path.split('\n') if isinstance(file_path, str) else file_path
+        
+        for p in paths:
+            p = p.strip()
+            if not p or not os.path.exists(p): continue
+            
+            _log(logger, f"Anexando individualmente: {os.path.basename(p)}")
+            clicar_clip(driver, logger=logger)
+            clicar_botao_documento(driver, p, logger=logger)
 
-        clicar_clip(driver, logger=logger)
+            input_file = localizar_input_file(driver, logger)
+            if not input_file: raise Exception("Input file não encontrado")
+            
+            # Envia o caminho absoluto de apenas UM arquivo por vez
+            input_file.send_keys(os.path.abspath(p))
+            time.sleep(2.0) 
 
-        try:
-            clicar_botao_documento(driver, logger=logger)
-        except Exception:
-            _log(logger, "Opção 'Documento' não encontrada — tentando upload pelo input")
+            # Botão de enviar (seta verde) - Seletor híbrido para Business e Normal
+            send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar'] | //span[@data-icon='send']", timeout=5)
+            
+            if send_btn:
+                driver.execute_script("arguments[0].click();", send_btn)
+                time.sleep(2.0) 
+            else:
+                _log(logger, "Botão de enviar não encontrado após upload.")
 
-        # upload do arquivo
-        input_file = localizar_input_file(driver, logger)
-        if not input_file:
-            raise Exception("input[type='file'] não encontrado para upload do arquivo")
-
-        input_file.send_keys(file_path)
-        time.sleep(1)
-
-        # encontrar o botão de enviar arquivo
-        send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=2)
-        if not send_btn:
-            send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled' or @data-icon='send']", timeout=2)
-
-        if not send_btn:
-            raise Exception("Botão de envio do arquivo não encontrado")
-
-        try:
-            send_btn.click()
-        except Exception as e:
-            _log(logger, "Falha ao clicar botão de enviar arquivo")
-            raise e
-
-        _log(logger, "Arquivo enviado com sucesso")
         return True
-
     except Exception as e:
         _log(logger, f"Erro enviar_arquivo: {e}")
         raise
-    time.sleep(2)
 
 def enviar_arquivo_com_mensagem(driver, file_path, message, logger=None):
-    """
-    Envia arquivo com legenda (mensagem).
-    Observação: alguns campos de legenda só aparecem após upload; usamos espera.
-    """
     try:
-        _log(logger, f"Anexando arquivo com legenda: {file_path}")
+        # 1. Preparação dos arquivos 
+        paths = [os.path.abspath(p.strip()) for p in file_path.split('\n') if p.strip()] if isinstance(file_path, str) else [os.path.abspath(p) for p in file_path]
+        full_paths_string = "\n".join(paths)
 
+        # 2. Abrir menu de anexo
         clicar_clip(driver, logger=logger)
-
-        try:
-            clicar_botao_documento(driver, logger=logger)
-        except Exception:
-            _log(logger, "Documento não obrigatório — seguindo")
-
-        input_file = localizar_input_file(driver, logger)
-        if not input_file:
-            raise Exception("Não foi possível localizar input[type='file']")
-
-        input_file.send_keys(file_path)
-        time.sleep(1.0)
-
-        caption_candidates = [
-            (By.XPATH, "//div[@role='textbox' and @aria-label='Digite uma mensagem']"),
-            (By.XPATH, "//div[@contenteditable='true' and @data-tab='6']"),
-            (By.CSS_SELECTOR, "div[contenteditable='true']")
+        
+        # --- LÓGICA HÍBRIDA PARA BOTÃO DE FOTOS/VÍDEOS ---
+        _log(logger, "Localizando botão de Fotos e Vídeos...")
+        seletores_fotos = [
+            (By.XPATH, "/html/body/div[1]/div/div/div/div/span[6]/div/ul/div/div/div[2]/li"), # Business
+            (By.XPATH, '//*[@id="app"]/div/div/div[4]/div/div/div[1]/div[1]/div/div/div/div/div[1]/div[2]/div[1]/div[2]/span'), # Normal XPath
+            (By.CSS_SELECTOR, "#app > div > div > div:nth-child(11) > div > div > div.xu96u03.xm80bdy.x10l6tqk.x13vifvy.xoz0ns6.x1gslohp > div.html-div.xdj266r.x14z9mp.xat24cr.x1lziwak.xexx8yu.xyri2b.x18d9i69.x1c1uobl > div > div > div > div > div.x78zum5.xdt5ytf.x1iyjqo2.x1n2onr6 > div:nth-child(2) > div.x6s0dn4.xlr9sxt.xvvg52n.xwd4zgb.xq8v1ta.x78zum5.xu0aao5.xh8yej3 > div.x78zum5.xdt5ytf.x1iyjqo2.xde1mab > span"), # Normal CSS
+            (By.XPATH, "//span[@data-icon='attach-image']/parent::div/parent::li") # Fallback Universal
         ]
+        
+        btn_fotos, _ = _find(driver, seletores_fotos)
+        
+        if not btn_fotos:
+            raise Exception("Não foi possível encontrar o botão de Fotos em nenhuma das versões.")
+            
+        driver.execute_script("arguments[0].click();", btn_fotos)
+        time.sleep(2)
 
-        caption_box, sel = _find(driver, caption_candidates)
-        if not caption_box:
-            _log(logger, "Caixa de legenda não encontrada — ignorando legenda")
-        else:
-            try:
+        # 3. Enviar arquivos (Injeção direta no input oculto)
+        input_file = localizar_input_file(driver, logger)
+        input_file.send_keys(full_paths_string)
+        
+        _log(logger, "Aguardando preview das imagens...")
+        time.sleep(6) # Tempo essencial para o WA montar o álbum
+
+        # 4. Inserir Legenda via Ctrl+V 
+        if message:
+            _log(logger, "Colando legenda...")
+            # Unindo seus candidatos do Business com o normal
+            caption_candidates = [
+                (By.XPATH, "//*[@id='app']/div/div/div[3]/div/div[3]/div[2]/div/span/div/div/div/div[2]/div/div[1]/div[3]/div/div/div[1]/div[1]/div[1]/p"), # Business/Normal XPath
+                (By.CSS_SELECTOR, "div.lexical-rich-text-input div[contenteditable='true']"), # CSS Geral
+                (By.XPATH, "//div[contains(@aria-label, 'legenda')]"), # Atributo Acessibilidade
+                (By.CSS_SELECTOR, "#app > div > div > div.x78zum5.xdt5ytf.x5yr21d > div > div.x10l6tqk.x13vifvy.x1o0tod.x78zum5.xh8yej3.x5yr21d.x6ikm8r.x10wlt62.x47corl > div.x9f619.x1n2onr6.x5yr21d.x6ikm8r.x10wlt62.x17dzmu4.x1i1dayz.x2ipvbc.xjdofhw.xyyilfv.x1iyjqo2.xpilrb4.x1t7ytsu.x1vb5itz.x12xzxwr > div > span > div > div > div > div.x1n2onr6.xupqr0c.x78zum5.x1r8uery.x1iyjqo2.xdt5ytf.x1hc1fzr.x6ikm8r.x10wlt62.x1anedsm > div > div.x78zum5.x1iyjqo2.xs83m0k.x1r8uery.xdt5ytf.x1qughib.x6ikm8r.x10wlt62 > div.x1c4vz4f.xs83m0k.xdl72j9.x1g77sc7.x78zum5.xozqiw3.x1oa3qoh.x12fk4p8.xeuugli.x2lwn1j.xl56j7k.x1q0g3np.x6s0dn4.x1n2onr6.xo8q3i6.x1y1aw1k.xwib8y2.x1c1uobl.xyri2b > div > div > div.x1c4vz4f.xs83m0k.xdl72j9.x1g77sc7.x78zum5.xozqiw3.x1oa3qoh.x12fk4p8.xeuugli.x2lwn1j.x1nhvcw1.x1q0g3np.x1cy8zhl.x9f619.xh8yej3.x1ba4aug.x1tiyuxx.xvtqlqk.x1nbhmlj.xdx6fka.x1od0jb8.xyi3aci.xwf5gio.x1p453bz.x1suzm8a > div.x1n2onr6.xh8yej3.x1k70j0n.x14z9mp.xzueoph.x1lziwak.xisnujt.x14ug900.x1vvkbs.x126k92a.x1hx0egp.lexical-rich-text-input > div.x1hx0egp.x6ikm8r.x1odjw0f.x1k6rcq7.x1lkfr7t > p") # CSS Normal
+            ]
+            
+            caption_box, _ = _find(driver, caption_candidates)
+            
+            if caption_box:
+                pyperclip.copy(message)
                 caption_box.click()
-                if message:
-                    caption_box.send_keys(message)
-                    time.sleep(0.4)
-            except Exception as e:
-                raise Exception("Falha ao inserir legenda")
+                time.sleep(0.5)
+                
+                # Técnica Ctrl+A + Backspace + Ctrl+V
+                caption_box.send_keys(Keys.CONTROL + "a")
+                caption_box.send_keys(Keys.BACKSPACE)
+                caption_box.send_keys(Keys.CONTROL + "v")
+                time.sleep(1)
+            else:
+                _log(logger, "Aviso: Caixa de legenda não encontrada para colar texto.")
 
-        send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=1)
-        if not send_btn:
-            send_btn = _wait(driver, By.XPATH, "//span[@data-icon='wds-ic-send-filled' or @data-icon='send']", timeout=1)
+        # 5. Clique no Enviar (Seta Verde)
+        # Sendo redundante com seletores de ícone e de label
+        send_btn_candidates = [
+            (By.XPATH, "//span[@data-icon='send']"),
+            (By.XPATH, "//div[@role='button' and @aria-label='Enviar']"),
+            (By.XPATH, "//*[@id='app']/div/div/div[3]/div/div[3]/div[2]/div/span/div/div/div/div[2]/div/div[2]/div[2]/span/div/div/span"),
+            (By.XPATH, "/html/body/div[1]/div/div/div/div/div[3]/div/div[3]/div[2]/div/span/div/div/div/div[2]/div/div[2]/div[2]/span/div/div/span"),
+            (By.CSS_SELECTOR, "div[aria-label='Enviar'] span[data-icon='send']"),
+            (By.CSS_SELECTOR, "#app > div > div > div.x78zum5.xdt5ytf.x5yr21d > div > div.x10l6tqk.x13vifvy.x1o0tod.x78zum5.xh8yej3.x5yr21d.x6ikm8r.x10wlt62.x47corl > div.x9f619.x1n2onr6.x5yr21d.x6ikm8r.x10wlt62.x17dzmu4.x1i1dayz.x2ipvbc.xjdofhw.xyyilfv.x1iyjqo2.xpilrb4.x1t7ytsu.x1vb5itz.x12xzxwr > div > span > div > div > div > div.x1n2onr6.xupqr0c.x78zum5.x1r8uery.x1iyjqo2.xdt5ytf.x1hc1fzr.x6ikm8r.x10wlt62.x1anedsm > div > div.x78zum5.x1c4vz4f.x2lah0s.x1helyrv.x6s0dn4.x1qughib.x178xt8z.x13fuv20.xx42vgk.x1y1aw1k.xwib8y2.xf7dkkf.xv54qhq > div.x1247r65.xng8ra > span > div > div > span")
+        ]
+        send_btn, _ = _find(driver, send_btn_candidates)
+        
+        if send_btn:
+            driver.execute_script("arguments[0].click();", send_btn)
+            _log(logger, "Botão enviar clicado.")
+        else:
+            _log(logger, "Falha ao encontrar botão de envio final.")
 
-        if not send_btn:
-            raise Exception("Botão de envio do arquivo+mensagem não encontrado")
-
-        try:
-            send_btn.click()
-        except Exception as e:
-            _log(logger, "Falha ao clicar botão de envio de arquivo + mensagem")
-            raise e
-
-        _log(logger, "Arquivo + mensagem enviados com sucesso")
+        _log(logger, "Lote enviado com sucesso.")
+        time.sleep(2)
         return True
 
     except Exception as e:
-        _log(logger, f"Erro enviar_arquivo_com_mensagem: {e}")
+        _log(logger, f"Erro crítico na função: {e}")
         raise
-    time.sleep(3)
+
+# --------------------------
+# Funções para múltiplos arquivos
+# --------------------------
+
+def enviar_arquivos_multiplos(driver, lista_file_paths, logger=None):
+    """
+    Envia vários arquivos de uma vez.
+    lista_file_paths: deve ser uma lista de caminhos, ex: ['c:/img1.png', 'c:/img2.jpg']
+    """
+    try:
+        # Transforma a lista em uma string única separada por \n
+        files_string = "\n".join(lista_file_paths)
+        primeiro_arquivo = lista_file_paths[0]
+
+        _log(logger, f"Anexando {len(lista_file_paths)} arquivos...")
+        clicar_clip(driver, logger=logger)
+        
+        # Usa o primeiro arquivo apenas para decidir se abre 'Fotos' ou 'Documentos'
+        clicar_botao_documento(driver, primeiro_arquivo, logger=logger)
+
+        input_file = localizar_input_file(driver, logger)
+        if not input_file: 
+            raise Exception("Input file não encontrado")
+        
+        # O segredo está aqui: enviar a string com todos os arquivos
+        input_file.send_keys(files_string)
+        
+        # Tempo maior para carregar múltiplos previews
+        time.sleep(4.0) 
+
+        send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=3)
+        if not send_btn:
+            send_btn = _wait(driver, By.XPATH, "//span[@data-icon='send' or @data-icon='wds-ic-send-filled']", timeout=2)
+        
+        driver.execute_script("arguments[0].click();", send_btn)
+        _log(logger, "Envio múltiplo concluído.")
+        return True
+    except Exception as e:
+        _log(logger, f"Erro enviar_arquivos_multiplos: {e}")
+        raise
+
+def enviar_arquivos_multiplos_com_mensagem(driver, lista_file_paths, message, logger=None):
+    """
+    Envia vários arquivos e uma única legenda que vale para todos.
+    """
+    try:
+        files_string = "\n".join(lista_file_paths)
+        primeiro_arquivo = lista_file_paths[0]
+
+        clicar_clip(driver, logger=logger)
+        clicar_botao_documento(driver, primeiro_arquivo, logger=logger)
+
+        input_file = localizar_input_file(driver, logger)
+        input_file.send_keys(files_string)
+        
+        # Aguarda carregar todos os arquivos no preview
+        time.sleep(5.0) 
+
+        caption_candidates = [
+            (By.XPATH, "//div[@role='textbox' and contains(@aria-label, 'mensagem')]"),
+            (By.XPATH, "//div[@contenteditable='true' and @data-tab='10']"),
+            (By.CSS_SELECTOR, "div[contenteditable='true']")
+        ]
+        
+        caption_box, sel = _find(driver, caption_candidates)
+        
+        if caption_box:
+            driver.execute_script("arguments[0].focus();", caption_box)
+            caption_box.click()
+            time.sleep(1)
+            if message:
+                caption_box.send_keys(message)
+                time.sleep(1)
+
+        send_btn = _wait(driver, By.XPATH, "//div[@role='button' and @aria-label='Enviar']", timeout=3)
+        driver.execute_script("arguments[0].click();", send_btn)
+        return True
+    except Exception as e:
+        _log(logger, f"Erro envio múltiplo com mensagem: {e}")
+        raise
 
 # --------------------------
 # Função mestre
@@ -620,13 +721,27 @@ def executar_envio(userdir, target, mode, message=None, file_path=None, logger=N
         _log(logger, f"Erro em executar_envio: {str(e)}")
         _log(logger, traceback.format_exc())
         raise
+
+
     finally:
-        # SIMPLES: Fecha o driver se ele existir
         if driver:
             try:
-                time.sleep(10)  # Espera 10 segundos antes de fechar para caso envie um arquivo maior
+                time.sleep(10) 
+                # 1. Captura o PID enquanto o driver ainda está ativo
+                pid_bot = getattr(driver, 'browser_pid', None) 
+                
+                # 2. Tenta o fechamento padrão
                 driver.close()
                 driver.quit()
-                _log(logger, "Driver finalizado.")
-            except:
-                pass  # Se der erro ao fechar, continua
+                time.sleep(5)
+                
+                # 3. Mata o processo remanescente se ele ainda existir
+                if pid_bot:
+                    import psutil
+                    if psutil.pid_exists(pid_bot):
+                        processo = psutil.Process(pid_bot)
+                        processo.terminate()
+                
+                _log(logger, "Driver e processos encerrados com sucesso.")
+            except Exception as e:
+                _log(logger, f"Aviso ao fechar: {e}")

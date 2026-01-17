@@ -38,7 +38,7 @@ def init_db(conn):
 def get_conn():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
-    init_db(conn)   # ← GARANTIA ABSOLUTA
+    init_db(conn)
     return conn
 
 

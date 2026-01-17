@@ -36,7 +36,7 @@ def create_task_bat(task_id, task_name, json_config):
         bat_content = f"""@echo off
 chcp 65001 >nul
 cd /d "{app_path}"
-"{exe_path}" --auto "{json_path}"
+"{exe_path}" --auto "{json_path}" --task_id {task_id}
 """
     else:
         python_path = sys.executable
@@ -44,7 +44,7 @@ cd /d "{app_path}"
         bat_content = f"""@echo off
 chcp 65001 >nul
 cd /d "{app_path}"
-"{python_path}" "{script_path}" --auto "{json_path}"
+"{python_path}" "{script_path}" --auto "{json_path}" --task_id {task_id}
 """
     
     # Grava o BAT com UTF-8 para suportar o comando chcp 65001
@@ -78,6 +78,8 @@ def create_windows_task(task_id, task_name, schedule_time, schedule_date=None):
     
     # Retorna True e sucesso para a interface
     return True, "Agendamento criado com sucesso!"
+
+
 
 def delete_windows_task(task_id):
     """Remove a tarefa do agendador usando o padrão de nome correto"""

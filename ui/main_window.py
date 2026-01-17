@@ -1,684 +1,455 @@
-'''import os
-import sys
-import subprocess
-from datetime import datetime
-from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QLabel, QLineEdit, QTextEdit,
-    QPushButton, QFileDialog, QVBoxLayout, QHBoxLayout,
-    QMessageBox, QComboBox, QDateTimeEdit
-)
-from PySide6.QtCore import QDateTime, Qt, QSettings
-from PySide6.QtGui import QIcon
-from core.windows_scheduler import create_task_bat, create_windows_task
-from core.db import db
-from core import automation
-from core.automation import contador_execucao 
-
-# icone
-if getattr(sys, 'frozen', False):
-    INTERNAL_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-    # EXTERNAL_DIR é a pasta onde o usuário colocou o .exe
-    EXTERNAL_DIR = os.path.dirname(sys.executable)
-else:
-    # Se for script Python normal
-    INTERNAL_DIR = os.path.dirname(os.path.abspath(__file__))
-    # Sobe um nível para sair da pasta 'ui' e ir para a raiz do projeto
-    EXTERNAL_DIR = os.path.dirname(INTERNAL_DIR)
-
-PROFILE_DIR = os.path.join(EXTERNAL_DIR, "perfil_bot_whatsapp")
-
-def _get_icon_path():
-    return os.path.join(INTERNAL_DIR, "resources", "Taty_s-English-Logo.ico")
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Study Practices - WhatsApp Automation")
-        self.setMinimumSize(500, 750)
-
-        self.tema_atual = 'claro'
-        self.file_path = None
-        icon_path = _get_icon_path()
-        
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
-            
-        self._build_ui()
-        self._aplicar_tema('claro')
-        
-        # Verifica status e atualiza contador na inicialização
-        self.verificar_status_agendamentos()
-        self.atualizar_contador_exibicao()
-
-    def _aplicar_tema(self, modo):
-        """Define as cores do app, incluindo os botões roxos com efeito hover"""
-        if modo == 'escuro':
-            bg_color = "#2b2b2b"
-            text_color = "#ffffff"
-            input_bg = "#3d3d3d"
-            border = "#555"
-            label_color = "#eeeeee"
-        else:
-            bg_color = "#f0f2f5"
-            text_color = "#000000"
-            input_bg = "#ffffff"
-            border = "#ccc"
-            label_color = "#333333"
-
-        self.setStyleSheet(f"""
-            QMainWindow {{ background-color: {bg_color}; }}
-            QWidget {{ background-color: {bg_color}; color: {text_color}; }}
-            
-            QLineEdit, QTextEdit, QDateTimeEdit, QComboBox {{ 
-                background-color: {input_bg}; 
-                color: {text_color}; 
-                border: 1px solid {border}; 
-                border-radius: 4px; 
-                padding: 5px;
-            }}
-
-            QLabel {{ color: {label_color}; }}
-
-            /* BOTÕES ROXOS ESTILIZADOS */
-            QPushButton {{
-                background-color: #b39ddb; /* Roxo mais claro (Pastel) */
-                color: white;
-                font-weight: bold;
-                border-radius: 8px;
-                padding: 10px;
-                border: none;
-            }}
-
-            QPushButton:hover {{
-                background-color: #7e57c2; /* Roxo mais forte ao passar o mouse */
-            }}
-
-            QPushButton:pressed {{
-                background-color: #5e35b1;
-            }}
-
-            QPushButton:disabled {{
-                background-color: #d1d1d1;
-                color: #888;
-            }}
-        """)
-
-    def _toggle_tema(self):
-        if self.tema_atual == "claro":
-            self.tema_atual = "escuro"
-            self.theme_btn.setText("☀️ Modo Claro")
-        else:
-            self.tema_atual = "claro"
-            self.theme_btn.setText("🌙 Modo Escuro")
-        self._aplicar_tema(self.tema_atual)
-
-    def atualizar_contador_exibicao(self):
-        """Atualiza a label de execuções lendo o arquivo de log"""
-        print(f'DEBUG: Tentando ler contador em: {EXTERNAL_DIR}')
-        try:
-            # Tenta obter o número de execuções sem incrementar
-            count = contador_execucao(incrementar=False)
-            self.count_label.setText(f"Execuções totais: {count}")
-        except Exception as e:
-            print(f"Erro ao ler contador na UI: {e}")
-            self.count_label.setText("Execuções totais: 0")
-
-    def _build_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout()
-
-        # ===== BARRA SUPERIOR (Contador e Tema) =====
-        top_bar = QHBoxLayout()
-        self.count_label = QLabel("Execuções: 0")
-        self.count_label.setStyleSheet("font-size: 11px; color: #888; font-weight: bold;")
-        
-        self.theme_btn = QPushButton("🌙 Modo Escuro")
-        self.theme_btn.setFixedWidth(120)
-        self.theme_btn.clicked.connect(self._toggle_tema)
-        
-        top_bar.addWidget(self.count_label)
-        top_bar.addStretch()
-        top_bar.addWidget(self.theme_btn)
-        layout.addLayout(top_bar)
-
-        # ===== ÁREA DE STATUS =====
-        self.status_label = QLabel("Sistema pronto")
-        self.status_label.setStyleSheet("padding: 5px; color: #555; border-bottom: 1px solid #ddd; margin-bottom: 10px;")
-        layout.addWidget(self.status_label)
-
-        # ===== CAMPOS DE ENTRADA =====
-        layout.addWidget(QLabel("Contato / Número:"))
-        self.target_input = QLineEdit()
-        self.target_input.setPlaceholderText("Ex: 5511999999999 ou Nome do Contato/Grupo")
-        layout.addWidget(self.target_input)
-
-        layout.addWidget(QLabel("Modo de envio:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItem("Somente texto", "text")
-        self.mode_combo.addItem("Somente arquivo", "file")
-        self.mode_combo.addItem("Arquivo + texto", "file_text")
-        self.mode_combo.currentIndexChanged.connect(self._on_mode_change)
-        layout.addWidget(self.mode_combo)
-
-        layout.addWidget(QLabel("Mensagem:"))
-        self.message_input = QTextEdit()
-        self.message_input.setPlaceholderText("Digite sua mensagem aqui...")
-        layout.addWidget(self.message_input)
-
-        file_layout = QHBoxLayout()
-        self.file_label = QLabel("Nenhum arquivo selecionado")
-        self.file_btn = QPushButton("Selecionar Arquivo")
-        self.file_btn.clicked.connect(self._select_file)
-        file_layout.addWidget(self.file_btn)
-        file_layout.addWidget(self.file_label)
-        layout.addLayout(file_layout)
-
-        layout.addWidget(QLabel("Data e hora do envio:"))
-        self.datetime_picker = QDateTimeEdit()
-        self.datetime_picker.setCalendarPopup(True)
-        self.datetime_picker.setDisplayFormat("dd/MM/yyyy HH:mm")
-        self.datetime_picker.setMinimumDateTime(QDateTime.currentDateTime())
-        self.datetime_picker.setDateTime(QDateTime.currentDateTime().addSecs(300))
-        layout.addWidget(self.datetime_picker)
-
-        # ===== BOTÕES DE AÇÃO =====
-        buttons_layout = QHBoxLayout()
-        self.send_now_btn = QPushButton("Enviar agora")
-        self.send_now_btn.clicked.connect(self._send_now)
-        buttons_layout.addWidget(self.send_now_btn)
-
-        self.schedule_btn = QPushButton("Agendar")
-        self.schedule_btn.clicked.connect(self._schedule_task)
-        buttons_layout.addWidget(self.schedule_btn)
-        layout.addLayout(buttons_layout)
-
-        # ===== DICAS =====
-        info_label = QLabel(
-            "💡 Dica: O PC deve estar ligado no horário do envio.\n"
-            "O Chrome abrirá automaticamente para realizar a automação.\n"
-            "Se for agendamento, o chrome não ficará visível para não interromper seu trabalho."
-        )
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #888; font-size: 11px; padding: 10px;")
-        layout.addWidget(info_label)
-
-        central.setLayout(layout)
-        self._on_mode_change()
-
-    def verificar_status_agendamentos(self):
-        logs_dir = os.path.join(EXTERNAL_DIR, "logs")
-        if not os.path.exists(logs_dir): return
-        hoje = datetime.now().strftime('%Y-%m-%d')
-        log_path = os.path.join(logs_dir, f"auto_{hoje}.log")
-
-        if os.path.exists(log_path):
-            try:
-                with open(log_path, "r", encoding="utf-8") as f:
-                    conteudo = f.read()
-                    if "✓ AUTOMAÇÃO FINALIZADA COM SUCESSO" in conteudo:
-                        self.status_label.setText("✅ Último agendamento concluído com sucesso!")
-                        self.status_label.setStyleSheet("padding: 5px; color: green; font-weight: bold;")
-                    elif "❌ ERRO CRÍTICO" in conteudo:
-                        self.status_label.setText("⚠️ Falha detectada no último agendamento")
-                        self.status_label.setStyleSheet("padding: 5px; color: red; font-weight: bold;")
-            except: pass
-
-    def _on_mode_change(self):
-        mode = self.mode_combo.currentData()
-        self.message_input.setEnabled(mode in ("text", "file_text"))
-        self.file_btn.setEnabled(mode in ("file", "file_text"))
-        self.file_label.setEnabled(mode in ("file", "file_text"))
-
-    def _select_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Selecionar arquivo", "", "Todos os arquivos (*.*)")
-        if path:
-            self.file_path = path
-            self.file_label.setText(os.path.basename(path))
-
-    def _send_now(self):
-        target = self.target_input.text().strip()
-        mode = self.mode_combo.currentData()
-        message = self.message_input.toPlainText().strip()
-        file_path = self.file_path
-
-        if not self._validate_fields(target, mode, message, file_path): return
-
-        self.send_now_btn.setEnabled(False)
-        self.schedule_btn.setEnabled(False)
-
-        try:
-            # 1. Executa o envio via Selenium com modo manual (visível)
-            automation.executar_envio(
-                userdir=PROFILE_DIR, 
-                target=target, 
-                mode=mode,
-                message=message if mode in ("text", "file_text") else None,
-                file_path=file_path if mode in ("file", "file_text") else None,
-                logger=lambda m: print(f"[LOG] {m}"),
-                modo_execucao='manual'  # ← CHROME VISÍVEL
-            )
-            
-            # 2. Incrementa o contador MANUALMENTE aqui para garantir a sincronia
-            contador_execucao(incrementar=True)
-            
-            QMessageBox.information(self, "Sucesso", "Mensagem enviada!")
-            self._clear_form()
-            import time
-            time.sleep(0.5)
-            
-            # 3. Atualiza a tela
-            self.atualizar_contador_exibicao()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Erro", f"Falha no envio:\n{str(e)}")
-        finally:
-            self.send_now_btn.setEnabled(True)
-            self.schedule_btn.setEnabled(True)
-
-    def _schedule_task(self):
-        target = self.target_input.text().strip()
-        mode = self.mode_combo.currentData()
-        message = self.message_input.toPlainText().strip()
-        file_path = self.file_path
-        
-        qdt = self.datetime_picker.dateTime()
-        schedule_time = qdt.toString("HH:mm")
-        schedule_date = qdt.toString("dd/MM/yyyy")
-
-        if not self._validate_fields(target, mode, message, file_path): return
-
-        self.send_now_btn.setEnabled(False)
-        self.schedule_btn.setEnabled(False)
-
-        try:
-            dt_python = datetime(
-                qdt.date().year(), qdt.date().month(), qdt.date().day(),
-                qdt.time().hour(), qdt.time().minute()
-            )
-            
-            task_id = db.adicionar(
-                task_name=f"WA_Task_{int(QDateTime.currentMSecsSinceEpoch())}",
-                target=target,
-                mode=mode,
-                message=message if mode in ("text", "file_text") else None,
-                file_path=file_path if mode in ("file", "file_text") else None,
-                scheduled_time=dt_python
-            )
-
-            json_config = {
-                "task_id": str(task_id),
-                "task_name": f"WA_Task_{task_id}",
-                "target": target,
-                "mode": mode,
-                "message": message,
-                "file_path": file_path or "",
-                "schedule_time": schedule_time
-            }
-            create_task_bat(task_id, json_config["task_name"], json_config)
-            sucesso, msg = create_windows_task(task_id, json_config["task_name"], schedule_time, schedule_date)
-
-            if sucesso:
-                QMessageBox.information(self, "Sucesso", f"✓ Agendado para {schedule_date} às {schedule_time}")
-                self._clear_form()
-            else:
-                raise Exception(msg)
-
-        except Exception as e:
-            QMessageBox.critical(self, "Erro no Agendamento", str(e))
-        finally:
-            self.send_now_btn.setEnabled(True)
-            self.schedule_btn.setEnabled(True)
-
-    def _validate_fields(self, target, mode, message, file_path):
-        if not target:
-            QMessageBox.warning(self, "Campo obrigatório", "Informe o contato.")
-            return False
-        if mode in ("text", "file_text") and not message:
-            QMessageBox.warning(self, "Campo obrigatório", "Digite a mensagem.")
-            return False
-        if mode in ("file", "file_text") and not file_path:
-            QMessageBox.warning(self, "Campo obrigatório", "Selecione o arquivo.")
-            return False
-        return True
-
-    def _clear_form(self):
-        self.target_input.clear()
-        self.message_input.clear()
-        self.file_label.setText("Nenhum arquivo selecionado")
-        self.file_path = None
-        self.datetime_picker.setDateTime(QDateTime.currentDateTime().addSecs(300))'''
+# app ctk
 
 import os
 import sys
-import subprocess
-from datetime import datetime
-from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QLabel, QLineEdit, QTextEdit,
-    QPushButton, QFileDialog, QVBoxLayout, QHBoxLayout,
-    QMessageBox, QComboBox, QDateTimeEdit
-)
-from PySide6.QtCore import QDateTime, Qt, QSettings  # Adicionado QSettings
-from PySide6.QtGui import QIcon
-from core.windows_scheduler import create_task_bat, create_windows_task
+import customtkinter as ctk
+import traceback
+from datetime import datetime, timedelta
+from tkinter import filedialog, messagebox
+from tkcalendar import Calendar
 from core.db import db
-from core import automation
+from core import automation, windows_scheduler
 from core.automation import contador_execucao 
+import pyperclip
 
-# Gerenciamento de caminhos (Mantido conforme original)
-if getattr(sys, 'frozen', False):
-    INTERNAL_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-    EXTERNAL_DIR = os.path.dirname(sys.executable)
-else:
-    INTERNAL_DIR = os.path.dirname(os.path.abspath(__file__))
-    EXTERNAL_DIR = os.path.dirname(INTERNAL_DIR)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROFILE_DIR = os.path.join(BASE_DIR, "perfil_bot_whatsapp")
+THEME_FILE = os.path.join(BASE_DIR, "data", "theme_pref.txt")
+GEOMETRY_FILE = os.path.join(BASE_DIR, "data", "window_pos.txt")
 
-PROFILE_DIR = os.path.join(EXTERNAL_DIR, "perfil_bot_whatsapp")
-
-def _get_icon_path():
-    return os.path.join(INTERNAL_DIR, "resources", "Taty_s-English-Logo.ico")
-
-class MainWindow(QMainWindow):
+class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        # Inicializa configurações persistentes
-        self.settings = QSettings("StudyPractices", "WhatsAppAutomation")
-        
-        self.setWindowTitle("Study Practices - WhatsApp Automation")
-        self.setMinimumSize(500, 750)
 
-        # Carrega o último tema salvo ou inicia no 'claro' por padrão
-        self.tema_atual = self.settings.value("tema", "claro")
+        self.title("Study Practices - WhatsApp Automation")
+        self._restaurar_geometria()
+        self._carregar_tema_salvo()
+
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-        self.file_path = None
-        icon_path = _get_icon_path()
-        
+        icon_path = os.path.join(base_path, "resources", "Taty_s-English-Logo.ico")
         if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
-            
-        self._build_ui()
-        self._aplicar_tema(self.tema_atual)
-        self._atualizar_botao_tema_texto()
-        
-        self.verificar_status_agendamentos()
-        self.atualizar_contador_exibicao()
-
-    def _aplicar_tema(self, modo):
-        """Define as cores do app com contraste aprimorado para o modo escuro"""
-        if modo == 'escuro':
-            bg_color = "#000000"      # Preto puro para fundo
-            text_color = "#FFFFFF"    # Branco puro para texto
-            input_bg = "#1A1A1A"      # Cinza muito escuro para inputs
-            border = "#333333"        # Borda sutil
-            label_color = "#FFFFFF"   # Labels brancas
-            status_text = "#AAAAAA"   # Texto de status secundário
-        else:
-            bg_color = "#f0f2f5"
-            text_color = "#000000"
-            input_bg = "#ffffff"
-            border = "#ccc"
-            label_color = "#333333"
-            status_text = "#555555"
-
-        self.setStyleSheet(f"""
-            QMainWindow {{ background-color: {bg_color}; }}
-            QWidget {{ background-color: {bg_color}; color: {text_color}; }}
-            
-            QLineEdit, QTextEdit, QDateTimeEdit, QComboBox {{ 
-                background-color: {input_bg}; 
-                color: {text_color}; 
-                border: 1px solid {border}; 
-                border-radius: 4px; 
-                padding: 5px;
-            }}
-
-            QLabel {{ color: {label_color}; }}
-
-            /* BOTÕES ROXOS ESTILIZADOS */
-            QPushButton {{
-                background-color: #b39ddb;
-                color: white;
-                font-weight: bold;
-                border-radius: 8px;
-                padding: 10px;
-                border: none;
-            }}
-
-            QPushButton:hover {{
-                background-color: #7e57c2;
-            }}
-
-            QPushButton:pressed {{
-                background-color: #5e35b1;
-            }}
-
-            QPushButton:disabled {{
-                background-color: #d1d1d1;
-                color: #888;
-            }}
-        """)
-        # Atualiza a cor da label de status manualmente se não estiver em estado de erro/sucesso
-        if "Sistema pronto" in self.status_label.text():
-            self.status_label.setStyleSheet(f"padding: 5px; color: {status_text}; border-bottom: 1px solid {border}; margin-bottom: 10px;")
-
-    def _toggle_tema(self):
-        """Alterna entre temas e salva a preferência"""
-        if self.tema_atual == "claro":
-            self.tema_atual = "escuro"
-        else:
-            self.tema_atual = "claro"
-        
-        # Salva a escolha do usuário
-        self.settings.setValue("tema", self.tema_atual)
-        
-        self._aplicar_tema(self.tema_atual)
-        self._atualizar_botao_tema_texto()
-
-    def _atualizar_botao_tema_texto(self):
-        """Atualiza o ícone e texto do botão de alternância"""
-        if self.tema_atual == "claro":
-            self.theme_btn.setText("🌙 Modo Escuro")
-        else:
-            self.theme_btn.setText("☀️ Modo Claro")
-
-    def atualizar_contador_exibicao(self):
-        try:
-            count = contador_execucao(incrementar=False)
-            self.count_label.setText(f"Execuções totais: {count}")
-        except Exception as e:
-            self.count_label.setText("Execuções totais: 0")
-
-    def _build_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout()
-
-        top_bar = QHBoxLayout()
-        self.count_label = QLabel("Execuções: 0")
-        self.count_label.setStyleSheet("font-size: 11px; color: #888; font-weight: bold;")
-        
-        self.theme_btn = QPushButton("") # Texto definido no init
-        self.theme_btn.setFixedWidth(120)
-        self.theme_btn.clicked.connect(self._toggle_tema)
-        
-        top_bar.addWidget(self.count_label)
-        top_bar.addStretch()
-        top_bar.addWidget(self.theme_btn)
-        layout.addLayout(top_bar)
-
-        self.status_label = QLabel("Sistema pronto")
-        layout.addWidget(self.status_label)
-
-        layout.addWidget(QLabel("Contato / Número:"))
-        self.target_input = QLineEdit()
-        self.target_input.setPlaceholderText("Ex: 5511999999999 ou Nome do Contato/Grupo")
-        layout.addWidget(self.target_input)
-
-        layout.addWidget(QLabel("Modo de envio:"))
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItem("Somente texto", "text")
-        self.mode_combo.addItem("Somente arquivo", "file")
-        self.mode_combo.addItem("Arquivo + texto", "file_text")
-        self.mode_combo.currentIndexChanged.connect(self._on_mode_change)
-        layout.addWidget(self.mode_combo)
-
-        layout.addWidget(QLabel("Mensagem:"))
-        self.message_input = QTextEdit()
-        self.message_input.setPlaceholderText("Digite sua mensagem aqui...")
-        layout.addWidget(self.message_input)
-
-        file_layout = QHBoxLayout()
-        self.file_label = QLabel("Nenhum arquivo selecionado")
-        self.file_btn = QPushButton("Selecionar Arquivo")
-        self.file_btn.clicked.connect(self._select_file)
-        file_layout.addWidget(self.file_btn)
-        file_layout.addWidget(self.file_label)
-        layout.addLayout(file_layout)
-
-        layout.addWidget(QLabel("Data e hora do envio:"))
-        self.datetime_picker = QDateTimeEdit()
-        self.datetime_picker.setCalendarPopup(True)
-        self.datetime_picker.setDisplayFormat("dd/MM/yyyy HH:mm")
-        self.datetime_picker.setMinimumDateTime(QDateTime.currentDateTime())
-        self.datetime_picker.setDateTime(QDateTime.currentDateTime().addSecs(300))
-        layout.addWidget(self.datetime_picker)
-
-        buttons_layout = QHBoxLayout()
-        self.send_now_btn = QPushButton("Enviar agora")
-        self.send_now_btn.clicked.connect(self._send_now)
-        buttons_layout.addWidget(self.send_now_btn)
-
-        self.schedule_btn = QPushButton("Agendar")
-        self.schedule_btn.clicked.connect(self._schedule_task)
-        buttons_layout.addWidget(self.schedule_btn)
-        layout.addLayout(buttons_layout)
-
-        info_label = QLabel(
-            "💡 Dica: O PC deve estar ligado no horário do envio.\n"
-            "O Chrome abrirá automaticamente para realizar a automação.\n"
-            "Se for agendamento, o chrome não ficará visível para não interromper seu trabalho."
-        )
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet("color: #888; font-size: 11px; padding: 10px;")
-        layout.addWidget(info_label)
-
-        central.setLayout(layout)
-        self._on_mode_change()
-
-    # Métodos restantes (verificar_status_agendamentos, _on_mode_change, etc.) permanecem idênticos
-    def verificar_status_agendamentos(self):
-        logs_dir = os.path.join(EXTERNAL_DIR, "logs")
-        if not os.path.exists(logs_dir): return
-        hoje = datetime.now().strftime('%Y-%m-%d')
-        log_path = os.path.join(logs_dir, f"auto_{hoje}.log")
-
-        if os.path.exists(log_path):
-            try:
-                with open(log_path, "r", encoding="utf-8") as f:
-                    conteudo = f.read()
-                    if "✓ AUTOMAÇÃO FINALIZADA COM SUCESSO" in conteudo:
-                        self.status_label.setText("✅ Último agendamento concluído!")
-                        self.status_label.setStyleSheet("padding: 5px; color: green; font-weight: bold;")
-                    elif "❌ ERRO CRÍTICO" in conteudo:
-                        self.status_label.setText("⚠️ Falha no último agendamento")
-                        self.status_label.setStyleSheet("padding: 5px; color: red; font-weight: bold;")
+            try: self.iconbitmap(icon_path)
             except: pass
 
-    def _on_mode_change(self):
-        mode = self.mode_combo.currentData()
-        self.message_input.setEnabled(mode in ("text", "file_text"))
-        self.file_btn.setEnabled(mode in ("file", "file_text"))
-        self.file_label.setEnabled(mode in ("file", "file_text"))
+        self.file_path = None
+        self.cards_agendamentos = {}
+        self.primary_color = "#b39ddb"
+        self.hover_color = "#9575cd"
 
-    def _select_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Selecionar arquivo", "", "Todos os arquivos (*.*)")
-        if path:
-            self.file_path = path
-            self.file_label.setText(os.path.basename(path))
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-    def _send_now(self):
-        target = self.target_input.text().strip()
-        mode = self.mode_combo.currentData()
-        message = self.message_input.toPlainText().strip()
-        file_path = self.file_path
-        if not self._validate_fields(target, mode, message, file_path): return
-        self.send_now_btn.setEnabled(False)
-        self.schedule_btn.setEnabled(False)
+        self.tabview = ctk.CTkTabview(self, segmented_button_selected_color=self.primary_color, 
+                                      segmented_button_selected_hover_color=self.hover_color)
+        self.tabview.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
+        self.tabview.add("Novo Envio")
+        self.tabview.add("Meus Agendamentos")
+
+        self._setup_envio_tab()
+        self._setup_gestao_tab()
+        
+        self.atualizar_contador_exibicao()
+        self._carregar_agendamentos()
+        
+        self.protocol("WM_DELETE_WINDOW", self._ao_fechar)
+        
+        # INÍCIO DO LOOP: Atualização a cada 5 segundos
+        self.after(5000, self._loop_atualizacao)
+
+    def _restaurar_geometria(self):
+        if os.path.exists(GEOMETRY_FILE):
+            try:
+                with open(GEOMETRY_FILE, "r") as f:
+                    geo = f.read().strip()
+                    if geo: self.geometry(geo)
+            except: self.geometry("500x750")
+        else:
+            self.geometry("500x750")
+
+    def _ao_fechar(self):
         try:
-            automation.executar_envio(
-                userdir=PROFILE_DIR, 
-                target=target, 
-                mode=mode,
-                message=message if mode in ("text", "file_text") else None,
-                file_path=file_path if mode in ("file", "file_text") else None,
-                logger=lambda m: print(f"[LOG] {m}"),
-                modo_execucao='manual'
-            )
-            contador_execucao(incrementar=True)
-            QMessageBox.information(self, "Sucesso", "Mensagem enviada!")
-            self._clear_form()
-            import time
-            time.sleep(0.5)
-            self.atualizar_contador_exibicao()
-        except Exception as e:
-            QMessageBox.critical(self, "Erro", f"Falha no envio:\n{str(e)}")
-        finally:
-            self.send_now_btn.setEnabled(True)
-            self.schedule_btn.setEnabled(True)
+            os.makedirs(os.path.dirname(GEOMETRY_FILE), exist_ok=True)
+            with open(GEOMETRY_FILE, "w") as f:
+                f.write(self.geometry())
+        except: pass
+        self.destroy()
 
-    def _schedule_task(self):
-        target = self.target_input.text().strip()
-        mode = self.mode_combo.currentData()
-        message = self.message_input.toPlainText().strip()
-        file_path = self.file_path
-        qdt = self.datetime_picker.dateTime()
-        schedule_time = qdt.toString("HH:mm")
-        schedule_date = qdt.toString("dd/MM/yyyy")
-        if not self._validate_fields(target, mode, message, file_path): return
-        self.send_now_btn.setEnabled(False)
-        self.schedule_btn.setEnabled(False)
-        try:
-            dt_python = datetime(qdt.date().year(), qdt.date().month(), qdt.date().day(),
-                                qdt.time().hour(), qdt.time().minute())
-            task_id = db.adicionar(
-                task_name=f"WA_Task_{int(QDateTime.currentMSecsSinceEpoch())}",
-                target=target, mode=mode,
-                message=message if mode in ("text", "file_text") else None,
-                file_path=file_path if mode in ("file", "file_text") else None,
-                scheduled_time=dt_python
-            )
-            json_config = {
-                "task_id": str(task_id), "task_name": f"WA_Task_{task_id}",
-                "target": target, "mode": mode, "message": message,
-                "file_path": file_path or "", "schedule_time": schedule_time
-            }
-            create_task_bat(task_id, json_config["task_name"], json_config)
-            sucesso, msg = create_windows_task(task_id, json_config["task_name"], schedule_time, schedule_date)
-            if sucesso:
-                QMessageBox.information(self, "Sucesso", f"✓ Agendado para {schedule_date} às {schedule_time}")
-                self._clear_form()
-            else: raise Exception(msg)
-        except Exception as e:
-            QMessageBox.critical(self, "Erro no Agendamento", str(e))
-        finally:
-            self.send_now_btn.setEnabled(True)
-            self.schedule_btn.setEnabled(True)
+    def _carregar_tema_salvo(self):
+        if os.path.exists(THEME_FILE):
+            with open(THEME_FILE, "r") as f: ctk.set_appearance_mode(f.read().strip())
+        else: ctk.set_appearance_mode("system")
 
-    def _validate_fields(self, target, mode, message, file_path):
+    def _salvar_tema(self, modo):
+        os.makedirs(os.path.dirname(THEME_FILE), exist_ok=True)
+        with open(THEME_FILE, "w") as f: f.write(modo)
+
+    def _aplicar_mascara_hora(self, event):
+        entry = event.widget
+        if event.keysym in ("Left", "Right", "Up", "Down", "Tab"): return
+        texto = "".join([c for c in entry.get().replace(":", "") if c.isdigit()])[:4]
+        novo_texto = ""
+        if len(texto) > 0: novo_texto += texto[:2]
+        if len(texto) >= 2: novo_texto += ":" + texto[2:]
+        posicao_cursor = entry.index("insert")
+        entry.delete(0, "end")
+        entry.insert(0, novo_texto)
+        if posicao_cursor == 2 and event.keysym != "BackSpace": entry.icursor(3)
+        elif posicao_cursor == 3 and event.keysym == "BackSpace": entry.icursor(2)
+        else: entry.icursor(posicao_cursor)
+
+    def _validar_campos(self, target, mode, message, file_path):
         if not target:
-            QMessageBox.warning(self, "Campo obrigatório", "Informe o contato.")
+            messagebox.showerror("Campo Vazio", "Por favor, insira o contato ou número.")
             return False
-        if mode in ("text", "file_text") and not message:
-            QMessageBox.warning(self, "Campo obrigatório", "Digite a mensagem.")
-            return False
-        if mode in ("file", "file_text") and not file_path:
-            QMessageBox.warning(self, "Campo obrigatório", "Selecione o arquivo.")
-            return False
+        msg_limpa = message.strip() if message else ""
+        if mode == "text":
+            if not msg_limpa:
+                messagebox.showerror("Mensagem Vazia", "O modo 'Somente texto' exige uma mensagem.")
+                return False
+        elif mode == "file":
+            if not file_path:
+                messagebox.showerror("Arquivo Ausente", "O modo 'Somente arquivo' exige que você selecione ao menos um arquivo.")
+                return False
+        elif mode == "file_text":
+            erros = []
+            if not file_path: erros.append("- Selecionar ao menos um arquivo")
+            if not msg_limpa: erros.append("- Escrever uma mensagem/legenda")
+            if erros:
+                msg_erro = "Para o modo 'Arquivo + Texto', você precisa:\n" + "\n".join(erros)
+                messagebox.showerror("Dados Insuficientes", msg_erro)
+                return False
         return True
 
-    def _clear_form(self):
-        self.target_input.clear()
-        self.message_input.clear()
-        self.file_label.setText("Nenhum arquivo selecionado")
+    def _loop_atualizacao(self):
+        """Loop de atualização silenciosa a cada 5 segundos."""
+        try:
+            self._carregar_agendamentos()
+            self.atualizar_contador_exibicao()
+        except Exception as e:
+            print(f"Erro no loop: {e}")
+        finally:
+            self.after(5000, self._loop_atualizacao)
+
+    def _alternar_tema(self):
+        mode = "Light" if ctk.get_appearance_mode() == "Dark" else "Dark"
+        ctk.set_appearance_mode(mode)
+        self._salvar_tema(mode)
+
+    def _setup_envio_tab(self):
+        tab = self.tabview.tab("Novo Envio")
+        header_frame = ctk.CTkFrame(tab, border_width=1, border_color=("#DBDBDB", "#3d3d3d"))
+        header_frame.pack(fill="x", padx=10, pady=(10, 5))
+        
+        self.count_label = ctk.CTkLabel(header_frame, text="🚀 Execuções: 0", font=("Roboto", 13, "bold"), text_color=self.primary_color)
+        self.count_label.pack(side="left", padx=15, pady=8)
+        
+        self.theme_btn = ctk.CTkButton(header_frame, text="🌓 Tema", width=100, height=28, fg_color=self.primary_color, hover_color=self.hover_color, command=self._alternar_tema)
+        self.theme_btn.pack(side="right", padx=15)
+
+        ctk.CTkLabel(tab, text="Contato / Número:", font=("Roboto", 12)).pack(anchor="w", padx=15, pady=(5, 0))
+        self.target_input = ctk.CTkEntry(tab, placeholder_text="Ex: 5511999999999", height=35)
+        self.target_input.pack(fill="x", padx=10, pady=5)
+
+        self.mode_select = ctk.CTkOptionMenu(tab, values=["Somente texto", "Somente arquivo", "Arquivo + texto"], 
+                                             command=self._on_mode_change, 
+                                             fg_color=self.primary_color, button_color=self.primary_color, 
+                                             button_hover_color=self.hover_color)
+        self.mode_select.pack(fill="x", padx=10, pady=5)
+
+        self.message_input = ctk.CTkTextbox(tab, height=150, border_width=1)
+        self.message_input.pack(fill="both", expand=True, padx=10, pady=5)
+
+        action_box = ctk.CTkFrame(tab, border_width=1)
+        action_box.pack(fill="x", padx=10, pady=10)
+
+        file_frame = ctk.CTkFrame(action_box, fg_color="transparent")
+        file_frame.pack(fill="x", padx=10, pady=10)
+        self.file_btn = ctk.CTkButton(file_frame, text="Selecionar Arquivo(s)", state="disabled", 
+                                      fg_color="#d3d3d3", hover_color=self.hover_color, command=self._select_file)
+        self.file_btn.pack(side="left")
+        self.file_label = ctk.CTkLabel(file_frame, text="Nenhum arquivo", font=("Roboto", 10), text_color="gray")
+        self.file_label.pack(side="left", padx=10)
+
+        dt_frame = ctk.CTkFrame(action_box, fg_color="transparent")
+        dt_frame.pack(fill="x", padx=10, pady=(0, 10))
+        self.date_button = ctk.CTkButton(dt_frame, text=datetime.now().strftime("%d/%m/%Y"), 
+                                          fg_color=self.primary_color, hover_color=self.hover_color, 
+                                          command=lambda: self._abrir_calendario_custom(self.date_button))
+        self.date_button.pack(side="left", padx=(0, 10))
+        
+        self.time_input = ctk.CTkEntry(dt_frame, width=100)
+        self.time_input.pack(side="left")
+        self.time_input.bind("<KeyRelease>", self._aplicar_mascara_hora)
+        self._reset_time()
+
+        actions_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        actions_frame.pack(fill="x", padx=10, pady=10)
+        ctk.CTkButton(actions_frame, text="Enviar Agora", height=45, fg_color=self.primary_color, hover_color=self.hover_color, command=self._send_now).pack(side="left", expand=True, padx=5)
+        ctk.CTkButton(actions_frame, text="Agendar", height=45, fg_color=self.primary_color, hover_color=self.hover_color, command=self._schedule_task).pack(side="left", expand=True, padx=5)
+
+    def _on_mode_change(self, choice):
+        state = "normal" if choice != "Somente texto" else "disabled"
+        color = self.primary_color if choice != "Somente texto" else "#d3d3d3"
+        self.file_btn.configure(state=state, fg_color=color)
+        if choice == "Somente arquivo":
+            self.message_input.delete("1.0", "end")
+            self.message_input.configure(state="disabled")
+        else:
+            self.message_input.configure(state="normal")
+
+    def _select_file(self):
+        paths = filedialog.askopenfilenames()
+        if paths:
+            self.file_path = "\n".join(paths)
+            self.file_label.configure(text=f"{len(paths)} arquivo(s)" if len(paths) > 1 else os.path.basename(paths[0]))
+
+    def _reset_time(self):
+        self.time_input.delete(0, 'end')
+        self.time_input.insert(0, (datetime.now() + timedelta(minutes=2)).strftime("%H:%M"))
+
+    def _reset_fields(self):
+        self.target_input.delete(0, 'end')
+        self.message_input.configure(state="normal")
+        self.message_input.delete("1.0", "end")
         self.file_path = None
-        self.datetime_picker.setDateTime(QDateTime.currentDateTime().addSecs(300))
+        self.file_label.configure(text="Nenhum arquivo")
+        self.mode_select.set("Somente texto")
+        self._on_mode_change("Somente texto")
+        self._reset_time()
+        self.date_button.configure(text=datetime.now().strftime("%d/%m/%Y"))
+
+    def atualizar_contador_exibicao(self):
+        try: self.count_label.configure(text=f"🚀 Execuções: {contador_execucao(False)}")
+        except: pass
+
+    def _setup_gestao_tab(self):
+        tab = self.tabview.tab("Meus Agendamentos")
+        self.scrollable_frame = ctk.CTkScrollableFrame(tab, label_text="Histórico")
+        self.scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+    def _carregar_agendamentos(self):
+        """Atualiza a lista de cards de forma inteligente sem 'piscar' a tela."""
+        agendamentos = db.listar_todos()
+        ids_atuais = [row[0] for row in agendamentos]
+        
+        # 1. Remover cards que não estão mais no banco
+        for t_id in list(self.cards_agendamentos.keys()):
+            if t_id not in ids_atuais:
+                self.cards_agendamentos[t_id]['frame'].destroy()
+                del self.cards_agendamentos[t_id]
+        
+        status_colors = {"pending": "#808080", "running": "#2196F3", "completed": "#4CAF50", "failed": "#F44336"}
+
+        for row in agendamentos:
+            t_id, _, target, _, sched_time, status = row[0], row[1], row[2], row[3], row[4], row[5]
+            status_lower = str(status).lower()
+            cor = status_colors.get(status_lower, "#808080")
+            
+            try: dt_amigavel = datetime.fromisoformat(sched_time).strftime("%d/%m/%Y %H:%M")
+            except: dt_amigavel = sched_time
+
+            # 2. Atualizar card existente (Flicker-free)
+            if t_id in self.cards_agendamentos:
+                card_ref = self.cards_agendamentos[t_id]
+                
+                # Atualiza apenas se os valores mudaram
+                if card_ref['status_str'] != status_lower:
+                    card_ref['label_status'].configure(text=status_lower.upper(), text_color=cor)
+                    card_ref['status_str'] = status_lower
+                    state = "normal" if status_lower != "running" else "disabled"
+                    card_ref['btn_edit'].configure(state=state)
+                    card_ref['btn_del'].configure(state=state)
+                
+                if card_ref['label_target'].cget("text") != f"📱 {target}":
+                    card_ref['label_target'].configure(text=f"📱 {target}")
+                
+                if card_ref['label_date'].cget("text") != f"📅 {dt_amigavel}":
+                    card_ref['label_date'].configure(text=f"📅 {dt_amigavel}")
+
+            # 3. Criar novo card caso não exista
+            else:
+                card = ctk.CTkFrame(self.scrollable_frame, border_width=1)
+                card.pack(fill="x", pady=5, padx=5)
+                
+                info = ctk.CTkFrame(card, fg_color="transparent")
+                info.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+                
+                lbl_target = ctk.CTkLabel(info, text=f"📱 {target}", font=("Roboto", 12, "bold"))
+                lbl_target.pack(anchor="w")
+                
+                lbl_date = ctk.CTkLabel(info, text=f"📅 {dt_amigavel}", font=("Roboto", 10), text_color="gray")
+                lbl_date.pack(anchor="w")
+
+                actions = ctk.CTkFrame(card, fg_color="transparent")
+                actions.pack(side="right", padx=10)
+                
+                lbl_status = ctk.CTkLabel(actions, text=status_lower.upper(), text_color=cor, font=("Roboto", 9, "bold"))
+                lbl_status.pack()
+
+                btns = ctk.CTkFrame(actions, fg_color="transparent")
+                btns.pack()
+                
+                b_edit = ctk.CTkButton(btns, text="📝", width=30, fg_color=self.primary_color, hover_color=self.hover_color, command=lambda r=row: self._abrir_edicao(r))
+                b_edit.pack(side="left", padx=2)
+                
+                b_del = ctk.CTkButton(btns, text="🗑️", width=30, fg_color="#FF5252", hover_color="#ff1744", command=lambda r=row: self._excluir_agendamento(r))
+                b_del.pack(side="left", padx=2)
+                
+                self.cards_agendamentos[t_id] = {
+                    'frame': card, 
+                    'label_status': lbl_status, 
+                    'label_target': lbl_target,
+                    'label_date': lbl_date,
+                    'status_str': status_lower, 
+                    'btn_edit': b_edit, 
+                    'btn_del': b_del
+                }
+
+    def _abrir_edicao(self, row):
+        task_data = db.obter_por_id(row[0])
+        if not task_data: return
+
+        edit_win = ctk.CTkToplevel(self)
+        edit_win.title(f"Editando Agendamento")
+        edit_win.geometry("420x720")
+        edit_win.transient(self)
+        edit_win.lift(); edit_win.focus_force()
+        
+        self.temp_edit_file = task_data['file_path']
+        dt_original = datetime.fromisoformat(task_data['scheduled_time'])
+
+        ctk.CTkLabel(edit_win, text="Contato:").pack(pady=(15,0))
+        target_ent = ctk.CTkEntry(edit_win, width=320); target_ent.insert(0, task_data['target']); target_ent.pack()
+
+        ctk.CTkLabel(edit_win, text="Forma de Envio:").pack(pady=(10,0))
+        map_modos = {"text": "Somente texto", "file": "Somente arquivo", "file_text": "Arquivo + texto"}
+        rev_map = {v: k for k, v in map_modos.items()}
+        
+        msg_txt = ctk.CTkTextbox(edit_win, height=120, width=320)
+        btn_alt_file = ctk.CTkButton(edit_win, text="Alterar Arquivo(s)", width=150, height=28, fg_color="#3d3d3d", hover_color="#5a5a5a")
+
+        def atualizar_campos_edicao(choice):
+            if choice == "Somente texto":
+                btn_alt_file.configure(state="disabled", fg_color="#d3d3d3")
+                msg_txt.configure(state="normal")
+            elif choice == "Somente arquivo":
+                msg_txt.delete("1.0", "end"); msg_txt.configure(state="disabled")
+                btn_alt_file.configure(state="normal", fg_color="#3d3d3d")
+            else:
+                msg_txt.configure(state="normal")
+                btn_alt_file.configure(state="normal", fg_color="#3d3d3d")
+
+        mode_edit_select = ctk.CTkOptionMenu(edit_win, values=list(map_modos.values()), 
+                                             fg_color=self.primary_color, button_color=self.primary_color, 
+                                             width=320, command=atualizar_campos_edicao)
+        mode_edit_select.set(map_modos.get(task_data['mode'], "Somente texto"))
+        mode_edit_select.pack(pady=5)
+
+        ctk.CTkLabel(edit_win, text="Mensagem:").pack(pady=5)
+        msg_txt.insert("1.0", task_data['message'] or ""); msg_txt.pack()
+
+        ctk.CTkLabel(edit_win, text="Data e Horário:").pack(pady=5)
+        dt_edit_frame = ctk.CTkFrame(edit_win, fg_color="transparent")
+        dt_edit_frame.pack()
+        
+        btn_date_edit = ctk.CTkButton(dt_edit_frame, text=dt_original.strftime("%d/%m/%Y"), width=120, command=lambda: self._abrir_calendario_custom(btn_date_edit))
+        btn_date_edit.pack(side="left", padx=5)
+        
+        time_ent_edit = ctk.CTkEntry(dt_edit_frame, width=80)
+        time_ent_edit.insert(0, dt_original.strftime("%H:%M"))
+        time_ent_edit.pack(side="left", padx=5)
+        time_ent_edit.bind("<KeyRelease>", self._aplicar_mascara_hora)
+
+        lbl_f = ctk.CTkLabel(edit_win, text="Arquivos: " + (str(len(self.temp_edit_file.split('\n'))) if self.temp_edit_file else "0"), font=("Roboto", 10))
+        lbl_f.pack()
+
+        def selecionar_arquivos_edicao():
+            paths = filedialog.askopenfilenames()
+            if paths:
+                self.temp_edit_file = "\n".join(paths)
+                lbl_f.configure(text=f"Arquivos: {len(paths)}")
+
+        btn_alt_file.configure(command=selecionar_arquivos_edicao)
+        btn_alt_file.pack(pady=5)
+        atualizar_campos_edicao(mode_edit_select.get())
+
+        def salvar():
+            try:
+                t_val = target_ent.get().strip()
+                m_val = rev_map.get(mode_edit_select.get())
+                msg_val = msg_txt.get("1.0", "end-1c").strip()
+                f_val = self.temp_edit_file
+                h_val = time_ent_edit.get().strip()
+                if not self._validar_campos(t_val, m_val, msg_val, f_val): return
+                if len(h_val) != 5: return messagebox.showerror("Erro", "Hora incompleta. Use HH:MM")
+                nova_dt = datetime.strptime(f"{btn_date_edit.cget('text')} {h_val}", "%d/%m/%Y %H:%M")
+                if nova_dt < datetime.now(): return messagebox.showerror("Erro", "O horário deve ser no futuro.")
+
+                windows_scheduler.delete_windows_task(task_data['id'])
+                db.atualizar_agendamento_completo(task_data['id'], t_val, m_val, msg_val, f_val, nova_dt)
+                
+                json_cfg = {"target": t_val, "mode": m_val, "message": msg_val, "file_path": f_val}
+                windows_scheduler.create_task_bat(task_data['id'], task_data['task_name'], json_cfg)
+                windows_scheduler.create_windows_task(task_data['id'], task_data['task_name'], h_val, btn_date_edit.cget('text'))
+
+                messagebox.showinfo("Sucesso", "Atualizado!"); edit_win.destroy(); self._carregar_agendamentos()
+            except Exception as e: messagebox.showerror("Erro", str(e))
+
+        ctk.CTkButton(edit_win, text="Salvar Alterações", fg_color="#4CAF50", height=45, command=salvar).pack(pady=25)
+
+    def _excluir_agendamento(self, row):
+        if messagebox.askyesno("Excluir", f"Remover {row[2]}?"):
+            try:
+                windows_scheduler.delete_windows_task(row[0])
+                db.deletar(row[0]); self._carregar_agendamentos()
+            except Exception as e: messagebox.showerror("Erro", str(e))
+
+    def _get_mode_key(self):
+        m = {"Somente texto": "text", "Somente arquivo": "file", "Arquivo + texto": "file_text"}
+        return m.get(self.mode_select.get(), "text")
+
+    def _send_now(self):
+        target = self.target_input.get().strip()
+        message = self.message_input.get("1.0", "end-1c").strip()
+        mode = self._get_mode_key()
+        if not self._validar_campos(target, mode, message, self.file_path): return
+        try:
+            automation.executar_envio(userdir=PROFILE_DIR, target=target, mode=mode, message=message, file_path=self.file_path, modo_execucao='manual')
+            contador_execucao(True); self.atualizar_contador_exibicao(); messagebox.showinfo("Sucesso", "Enviado"); self._reset_fields()
+        except Exception as e: messagebox.showerror("Erro", str(e))
+
+    def _schedule_task(self):
+        target = self.target_input.get().strip()
+        message = self.message_input.get("1.0", "end-1c").strip()
+        mode = self._get_mode_key()
+        d, t = self.date_button.cget("text"), self.time_input.get().strip()
+        if not self._validar_campos(target, mode, message, self.file_path): return
+        if len(t) != 5: return messagebox.showerror("Erro", "Hora incompleta. Use HH:MM")
+        try:
+            dt = datetime.strptime(f"{d} {t}", "%d/%m/%Y %H:%M")
+            if dt < datetime.now(): return messagebox.showerror("Erro", "O horário deve ser no futuro.")
+            task_name = f"ZapTask_{int(datetime.now().timestamp())}"
+            t_id = db.adicionar(task_name=task_name, target=target, mode=mode, message=message, file_path=self.file_path, scheduled_time=dt)
+            if t_id:
+                json_cfg = {"target": target, "mode": mode, "message": message, "file_path": self.file_path}
+                windows_scheduler.create_task_bat(t_id, task_name, json_cfg)
+                suc, msg = windows_scheduler.create_windows_task(t_id, task_name, t, d)
+                if suc: messagebox.showinfo("Agendado", "Tarefa criada!"); self._carregar_agendamentos(); self._reset_fields()
+                else: messagebox.showerror("Erro", msg)
+        except Exception as e: messagebox.showerror("Erro", str(e))
+
+    def _abrir_calendario_custom(self, target_btn):
+        top = ctk.CTkToplevel(self)
+        top.title("Data")
+        top.attributes("-topmost", True)
+        cal = Calendar(top, selectmode='day', date_pattern='dd/mm/yyyy')
+        cal.pack(pady=10, padx=10)
+        ctk.CTkButton(top, text="Ok", fg_color=self.primary_color, hover_color=self.hover_color, command=lambda: [target_btn.configure(text=cal.get_date()), top.destroy()]).pack(pady=5)
+
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()
